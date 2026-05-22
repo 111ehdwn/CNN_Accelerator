@@ -173,7 +173,7 @@ def _forward(images_int8: np.ndarray,
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    data_dir    = os.path.normpath(os.path.join(here, '..', 'data_int8'))
+    data_dir    = os.path.normpath(os.path.join(here, '..', 'data'))
     mnist_cache = os.path.join(data_dir, 'mnist_cache')
 
     print("=" * 60)
