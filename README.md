@@ -61,9 +61,8 @@ Output Logit (10) → argmax
 `RTL/` 에서 본격적으로 시작. 명세 그대로의 INT8 Direct Convolution 으로 전체 파이프라인 구현. 1만 장 처리 latency 의 기준선(baseline) 을 확보하는 단계.
 
 - Output Stationary 데이터플로우 채택
-- Conv2 기준 `oc_par × ic_par × K × K = 8 × 2 × 3 × 3 = 144 DSP` 사용
+- Conv2 기준 `oc_par × ic_par × K = 8 × 8 × 3 × 3 = 192 DSP` 사용
 - 채널별 line buffer + window register 로 streaming 처리
-- 사이클 단위 동작 분해는 `docs/imple_1.md` 참조
 
 ### Phase 2 — Winograd Conv2 가속 (예정)
 
@@ -185,8 +184,7 @@ Phase 1 이후 모든 CNN 가속기 RTL 이 모이는 메인 디렉토리. 위 B
 
 설계·구현·협업 관련 모든 문서.
 
-- `constraint.md` — 보드/자원 한도, 타겟 CNN, 명세 (변경 불가 사항), 결정 사항
-- `imple_1.md` — Conv2 엔진의 사이클 단위 동작 분해, dataflow 결정, line buffer 구조 등 구현 상세
+- `project_overview.md` — 보드/자원 한도, 타겟 CNN, 결정 사항, 업무 분담 결정 내역
 - `DSP48E1_signed8x8_SIMD_Packing.md` — DSP48E1 단일 multiplier 로 signed 8×8 두 개를 동시에 수행하는 SIMD packing 알고리즘 (Winograd 단계 핵심 기법)
 - `cowork_guide.md` — Git / GitHub / VSCode / Python 환경 세팅부터 PR 까지의 협업 가이드
 - `pdfs/` — 과제 안내문, 베이스라인 보고서, 구현 계획 PDF, Winograd 참고 자료
@@ -208,7 +206,6 @@ Phase 1 이후 모든 CNN 가속기 RTL 이 모이는 메인 디렉토리. 위 B
 
 ## 6. 참고 문서 빠른 링크
 
-- 설계 명세: [`docs/constraint.md`](docs/constraint.md)
-- Conv2 사이클 분해: [`docs/imple_1.md`](docs/imple_1.md)
+- 프로젝트 명세 및 계획: [`docs/project_overview.md`](docs/project_overview.md)
 - DSP48E1 SIMD Packing: [`docs/DSP48E1_signed8x8_SIMD_Packing.md`](docs/DSP48E1_signed8x8_SIMD_Packing.md)
 - 협업 가이드: [`docs/cowork_guide.md`](docs/cowork_guide.md)
