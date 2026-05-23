@@ -4,8 +4,8 @@ import numpy as np
 # 파일 경로 설정 (스크립트 디렉터리에서 실행한다고 가정)
 # -------------------------------------------------------
 WEIGHT_FILE = "../../data/npy/layer2_0_weight.npy"
-OUTPUT_HEX  = "../../data/headers_simd/conv2_weights_simd.hex"
-OUTPUT_H    = "../../data/headers_simd/conv2_weights_simd.h"
+OUTPUT_HEX  = "../../data/weights_simd/conv2_weights_simd.hex"
+OUTPUT_H    = "../../data/weights_simd/conv2_weights_simd.h"
 
 # -------------------------------------------------------
 # Packing 정책
@@ -109,7 +109,7 @@ with open(OUTPUT_H, "w") as f:
 print(f"[Write] {OUTPUT_H}")
 
 # ====================================================================================
-# Verification Code!!
+# Verification!!
 # ====================================================================================
 def simd_decode(aport_25bit, x):
     """
