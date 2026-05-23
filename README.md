@@ -102,7 +102,7 @@ Block Design (Vivado GUI)
 ├── AXI Uartlite (debug)
 └── Custom IP
     ├── csr_slave_axi_inner (수정 버전)
-    └── cnn_accel_top
+    └── cnn_accelerator
         ├── conv1_engine (Direct conv, DSP+LUT mult)
         │   ├── input_bram (BRAM × 2 bank)
         │   ├── conv1_w_bram
