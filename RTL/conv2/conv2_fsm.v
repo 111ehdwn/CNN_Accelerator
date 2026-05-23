@@ -257,7 +257,9 @@ module conv2_fsm (
     // 6. row_cnt, col_cnt 갱신 (BRAM read 좌표)
     //
     //   shift_en=1인 cycle에 자율 증가 (nested counter)
-    //   DONE → PIPELINE_FILL 전이 시 (0, 0)으로 reset
+    //   ADVANCE의 (25,25) cycle (= 마지막 input read)에서 (0,0)으로 reset
+    //     → DONE 진입 시 이미 다음 image 초기 좌표 (overflow 회피)
+    //     → PIPELINE_FILL 진입 시 counter 그대로 사용
     //
     //   shift_en은 datapath control 출력 (combinational, state로부터):
     //     PIPELINE_FILL, COMPUTE_ADVANCE, COMPUTE_WRAP에서 shift_en=1
@@ -267,8 +269,8 @@ module conv2_fsm (
         if (rst) begin
             row_cnt <= 5'd0;
             col_cnt <= 5'd0;
-        end else if (state == DONE && ready_to_compute) begin
-            // 새 image 시작: counter reset
+        end else if (state == COMPUTE_ADVANCE && row_cnt == 5'd25 && col_cnt == 5'd25) begin
+            // 마지막 input read cycle → 다음 image용으로 (0,0) reset
             row_cnt <= 5'd0;
             col_cnt <= 5'd0;
         end else if (shift_en) begin

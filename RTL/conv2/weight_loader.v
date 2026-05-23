@@ -29,11 +29,18 @@
 //         for kh in 0..2
 //           pe_cell with ID = oc_pair*24 + ic*3 + kh
 //
-//   BMG 2-cycle latency 처리:
-//     Cycle T: c2w_addrb 전송, 카운터 (oc_pair, ic, kh, kw) at T
-//     Cycle T+2: c2w_doutb valid (mem[addr@T])
-//     PE 제어 신호 (pe_id, slot_id, pe_load_en)를 2-cycle shift register로 지연
-//     → BMG dout과 PE 신호가 동일 cycle에 valid
+//   Pipeline 지연 정렬 (3-stage 매칭):
+//     counter at cycle T (조합 출력 addr_calc, pe_id_calc, slot_id_calc)
+//       → c2w_addrb at T+1 (1-stage register)        : data path stage 1
+//       → BMG internal + output register             : data path stage 2~3
+//       → c2w_doutb at T+3, packed_w at T+3 (wire 직결): data path 종료
+//
+//       → pe_id_d1, slot_id_d1, load_en_d1 at T+1    : ctrl path stage 1
+//       → pe_id_d2, slot_id_d2, load_en_d2 at T+2    : ctrl path stage 2
+//       → pe_id, slot_id, pe_load_en at T+3 (출력 reg): ctrl path 종료
+//
+//     → packed_w와 PE 제어 신호 모두 cycle T+3에 동시 valid
+//       PE는 T+3 → T+4 edge에 weight register latch
 //
 //   Nested counter (나눗셈 없음, DSP 절약):
 //     매 cycle 증가, inner counter wrap 시 outer counter 진행
@@ -64,7 +71,7 @@ module weight_loader_conv2 (
     //==========================================================================
     output reg  [7:0]  pe_id,            // 0~191 (target PE)
     output reg  [1:0]  slot_id,          // 0~2 (K_col slot, = kw)
-    output reg  [24:0] packed_w,         // 25-bit Aport (BMG dout 하위 25-bit)
+    output wire [24:0] packed_w,         // 25-bit Aport (c2w_doutb 하위 25-bit 직결)
     output reg         pe_load_en        // 1-cycle pulse per PE
 );
 
@@ -216,14 +223,15 @@ module weight_loader_conv2 (
     end
 
     //==========================================================================
-    // 7. PE 신호 2-cycle shift register
+    // 7. PE 제어 신호 2-stage shift register (d1, d2)
     //
-    //   BMG addrb at cycle T → BMG doutb at cycle T+2
-    //   PE 제어 신호도 T+2에 valid 되어야 함
+    //   counter at cycle T → pe_id_calc, slot_id_calc, (state==LOADING) 조합
+    //   d1: cycle T+1에 cycle T 값 보유
+    //   d2: cycle T+2에 cycle T 값 보유
+    //   (section 8의 출력 register가 cycle T+3에 최종 정렬)
     //
-    //   Stage 1: 현재 카운터 (cycle T 값) latch
-    //   Stage 2: Stage 1 latch (cycle T+1 → T 값)
-    //   Output: Stage 2 (cycle T+2에 T 값)
+    //   총 ctrl path = d1 + d2 + 출력 register = 3 stage
+    //   data path  = c2w_addrb register + BMG 2-cycle = 3 stage (정렬)
     //==========================================================================
     reg [7:0] pe_id_d1, pe_id_d2;
     reg [1:0] slot_id_d1, slot_id_d2;
@@ -251,23 +259,28 @@ module weight_loader_conv2 (
     end
 
     //==========================================================================
-    // 8. PE broadcast output (BMG dout과 동기)
+    // 8. PE broadcast output
     //
-    //   pe_id, slot_id, pe_load_en: stage 2 값 (2 cycle 지연)
-    //   packed_w: c2w_doutb 하위 25-bit (자동 동기, 추가 지연 불필요)
+    //   pe_id, slot_id, pe_load_en: d2 → 출력 register (총 3-stage)
+    //                               counter T 값이 cycle T+3에 valid
+    //
+    //   packed_w: c2w_doutb[24:0] 직결 (wire)
+    //     c2w_addrb 1-stage register + BMG 2-cycle internal = 3-stage data path
+    //     cycle T+3에 mem[counter@T] 등장 → pe_id/load_en과 정확히 정렬
+    //     (추가 register 두면 ctrl path보다 1 cycle 늦어져 정렬 깨짐)
     //
     //   매 cycle 새 PE에 broadcast (LOADING 동안 매 cycle valid)
     //==========================================================================
+    assign packed_w = c2w_doutb[24:0];
+
     always @(posedge clk) begin
         if (rst) begin
             pe_id       <= 8'd0;
             slot_id     <= 2'd0;
-            packed_w    <= 25'd0;
             pe_load_en  <= 1'b0;
         end else begin
             pe_id       <= pe_id_d2;
             slot_id     <= slot_id_d2;
-            packed_w    <= c2w_doutb[24:0];
             pe_load_en  <= load_en_d2;
         end
     end

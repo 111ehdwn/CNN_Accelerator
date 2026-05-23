@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
-// Module Name: krow_adder_tree
+// Module Name: krow_ic_adder_tree
 // Description:
 //   24:1 signed adder tree (5-stage pipeline, 200 MHz target)
 //
