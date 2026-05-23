@@ -1,4 +1,4 @@
-# CNN Accelerator - 전체 아키텍처 Overview
+[# CNN Accelerator - 전체 아키텍처 Overview
 
 **Target**: Arty A7-100T FPGA / MNIST 10,000장 / INT8 quantized **Goal**: Latency 최소화 (목표 ~96 ms)
 
@@ -342,4 +342,4 @@ Verilog testbench       Vitis main.c
 
 **Bit-exact 검증**: 모든 layer 출력이 PyTorch golden과 INT8 단위로 정확히 일치해야 함.
 
----
+---](~~~~)
