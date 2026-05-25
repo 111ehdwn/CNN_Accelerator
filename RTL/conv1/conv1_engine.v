@@ -35,7 +35,7 @@ module conv1_engine (
     // weight BRAM 인터페이스 (읽기 전용)
     output wire [5:0]  w_bram_addr,    // 0~35
     output wire        w_bram_en,
-    input  wire [24:0] w_bram_dout,
+    input  wire [31:0] w_bram_dout,
 
     // 출력 BRAM 인터페이스 (쓰기 전용)
     // 8채널 × 26 × 26 = 5408 픽셀
