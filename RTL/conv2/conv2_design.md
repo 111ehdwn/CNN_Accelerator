@@ -32,7 +32,7 @@ Cycle/image: ~1,796 @ 180 MHz ≈ 10.0 μs
 ### 3.1 모듈 계층
 
 ```
-conv2_engine.v  (top, 작성 예정)
+conv2_engine.v  (top)
 ├── conv2_fsm.v             — 제어 plane (8 state, counters)
 ├── weight_loader.v         — BMG → 192 PE 적재 (시스템 시작 1회)
 ├── conv2_weight_bram       — BMG IP (32-bit × 576)
@@ -44,6 +44,12 @@ conv2_engine.v  (top, 작성 예정)
 └── truncate_relu #(.N(16)) — >>10, saturate, ReLU
 ```
 
+추가로 conv2_engine 내부에:
+- **col_sel mux × 24** (3 K_row × 8 IC): window 의 9 cell 중 col_sel 에 따라 3-cell 선택 → PE x 입력
+- **PE load enable decoder** (8-bit pe_id → 192-bit one-hot): weight 적재 시점 분배
+- **9-cycle delay pipeline** (sel, pe_en): kcol_accumulator 의 `kw_phase`/`en` 을 PE 4 + adder 5 = 9 cycle 지연
+- **c2pool write addr 카운터**: c2pool_we 마다 +1
+
 ### 3.2 데이터 흐름
 
 ```
@@ -52,15 +58,15 @@ c1c2 BRAM (8 IC × 8b = 64b/word, L=2)
 line_buffer (lb1, lb2)   ─→ 3-row 동시 보유
     ↓
 window_register (3×3, 8 IC)
-    ↓                       (col_sel, sel 로 매 cycle 선택)
+    ↓                       (col_sel mux)
 pe_cell × 192 (SIMD ×2)  ─→ 384 mul/cycle
-    ↓
-krow_ic_adder_tree × 16  ─→ 22-bit, OC_pair × SIMD 별
+    ↓                       (9-cycle delay alignment)
+krow_ic_adder_tree × 16  ─→ 22-bit
     ↓
 kcol_accumulator × 16    ─→ 24-bit, 3-cycle 누적
-    ↓
+    ↓                       (out_valid → truncate.en)
 truncate_relu (N=16)     ─→ 8-bit × 16 OC
-    ↓
+    ↓                       (1-cycle 지연 → c2pool_we)
 c2pool BRAM (128b/word)
 ```
 
@@ -145,7 +151,7 @@ module conv2_engine (
     input  wire         start,
 
     // Conv2 weight BMG (Port A, PS write via AXI BRAM Ctrl)
-    input  wire         c2w_ena,
+    input  wire         c2w_ena,      // 1-bit (BMG byte-write disabled 가정)
     input  wire [9:0]   c2w_addra,
     input  wire [31:0]  c2w_dina,
 
@@ -156,46 +162,122 @@ module conv2_engine (
 
     // c2pool buffer (Port A write)
     output wire         c2pool_we,
-    output wire [10:0]  c2pool_addr,  // {output_bank_sel, output_pixel_cnt[9:0]}
+    output wire [10:0]  c2pool_addr,  // {output_bank_sel, write_addr[9:0]}
     output wire [127:0] c2pool_din,   // 16 OC × 8b packed
 
-    // Handshake (양방향, 1-cycle pulse)
-    input  wire         prior_wdone,  // Conv1 → Conv2
-    output wire         rdone,        // Conv2 → Conv1
-    input  wire         succ_rdone,   // Maxpool → Conv2
-    output wire         wdone         // Conv2 → Maxpool
+    // Handshake (양방향, 1-cycle pulse, 모두 registered)
+    input  wire         prior_wdone,  // Conv1 → Conv2 (image 준비됨)
+    output wire         rdone,        // Conv2 → Conv1 (input bank 비움) — DRAIN entry 직후
+    input  wire         succ_rdone,   // Maxpool → Conv2 (output bank 비움)
+    output wire         wdone         // Conv2 → Maxpool (output bank 준비됨) — DRAIN exit 직전
 );
 ```
+
+**c2pool_addr 하위 10-bit (`write_addr`) 주의**:
+- engine 내부의 별도 카운터. c2pool_we pulse 마다 +1.
+- FSM 의 `output_pixel_cnt` 와 **다름** — `output_pixel_cnt` 는 PE input 시점, `write_addr` 는 c2pool write 시점 (pipeline 12 cycle 후).
+- DRAIN→DONE 시 0 으로 reset (다음 image 의 ping-pong bank 첫 픽셀부터 쓰기).
+
+**rdone/wdone 발생 정확 cycle** (`conv2_timing_tables.md §4` 참조):
+- `rdone`: 마지막 ADV (cycle 1784) 의 다음 cycle (1786). DRAIN entry 후 안전하게 input bank 해제.
+- `wdone`: 마지막 c2pool write (cycle 1795 edge) 의 다음 cycle (1796). DRAIN exit edge 직전.
 
 ---
 
 ## 6. 검증 전략
 
+### 6.1 단위 검증
+
 | Stage | 대상 | 방법 |
 |---|---|---|
-| 1 | `pe_cell` SIMD packing | 2²⁴ exhaustive (`scripts/header_hex_gen/conv2_simd_pack.py` 의 verification 함수 참조) |
+| 1 | `pe_cell` SIMD packing | 2²⁴ exhaustive (`scripts/header_hex_gen/conv2_simd_pack.py` 의 verification 함수 통과) |
 | 2 | `krow_ic_adder_tree` | random 입력, golden 비교 |
-| 3 | `kcol_accumulator` | 3-cycle pattern |
-| 4 | `truncate_relu` | 경계값 + random |
-| 5 | `weight_loader` | BMG read, PE broadcast 정확성 |
+| 3 | `kcol_accumulator` | 3-cycle pattern, kw_phase=0/1/2 |
+| 4 | `truncate_relu` | 경계값 (±127, ±128) + random |
+| 5 | `weight_loader` | BMG read 와 PE broadcast 의 3-stage delay 정합성 |
 | 6 | `conv2_fsm` | cycle trace 가 `conv2_timing_tables.md` verification anchors A1~A10 와 일치 |
-| 7 | `conv2_engine` 통합 | 1 image bit-exact (vs `scripts/golden_sim/0_reference.py`) |
-| 8 | cycle count 측정 | ~1,796 cycle/image |
+
+### 6.2 통합 검증 (`conv2_engine`)
+
+| Stage | 대상 | 방법 |
+|---|---|---|
+| 7 | 1 image bit-exact | 입력/weight/expected 를 dump → testbench 가 driving + 비교 (vs `scripts/golden_sim/0_reference.py` 의 `fmap2[0]`) |
+| 8 | Multi-image pipelining | 연속 2~3 image, ping-pong bank toggle, rdone/wdone 순서 검증 |
+| 9 | Cycle count | 1 image = 1,796 cycle, 2 image = 1,796 + N (N = bank stall 가능) |
 
 ---
 
-## 7. 참조 문서
+## 7. Testbench 외부 의존성
 
-- **`conv2_timing_tables.md`** — cycle-by-cycle 표, verification anchors. testbench 검증의 정본.
+`conv2_engine` 은 외부 모듈 (실제 Conv1, Maxpool, CSR, BMG IP) 과 핸드셰이크. testbench 가 이들의 역할을 emulate 해야 함:
+
+### 7.1 외부에서 주어야 하는 데이터
+
+| 데이터 | 크기 | 생성 위치 | 인터페이스 |
+|---|---|---|---|
+| Conv2 weight (pre-packed) | 576 × 32-bit | `scripts/header_hex_gen/conv2_simd_pack.py` (.hex) | testbench 가 `c2w_ena`/`c2w_addra`/`c2w_dina` 로 LOAD_WEIGHTS 전 또는 BMG `INIT_*` 로 직접 |
+| Conv1 출력 = Conv2 입력 (8 IC × 26 × 26 INT8) | 5,408 byte | `scripts/golden_sim/0_reference.py` (fmap1 dump 추가 필요) | testbench 의 virtual Conv1 이 c1c2 BRAM bank 에 write |
+| Conv2 expected output (16 OC × 24 × 24 INT8) | 9,216 byte | `scripts/golden_sim/0_reference.py` (fmap2 dump) | testbench 가 c2pool BRAM 내용과 cycle-end 에 비교 |
+
+### 7.2 외부 신호 driving 시퀀스 (single image)
+
+```
+[Reset]
+   ↓ rst=0 (release)
+   ↓
+[Weight load 단계] testbench 가 c2w_ena/addra/dina 로 576 word write
+   ↓
+   ↓ csr.start pulse (1 cycle)
+   ↓
+[engine LOAD_WEIGHTS] (576 + 2 drain = ~578 cycle, 내부 자동)
+   ↓
+[engine DONE, prior_wdone 대기]
+   ↓
+[testbench 의 virtual Conv1] c1c2 BRAM bank 0 에 입력 image write
+   ↓ 1-cycle prior_wdone pulse
+   ↓
+[engine PIPELINE_FILL → compute → DRAIN] (~1,796 cycle)
+   ↓                              ↓
+   ↓                          (cycle ~1796) wdone pulse
+   ↓                              ↓
+   ↓                          (testbench virtual Maxpool 이 c2pool 읽음 → succ_rdone pulse)
+   ↓
+   ↓ (cycle ~1786) rdone pulse → testbench virtual Conv1 이 다음 image 준비 가능
+   ↓
+[engine DONE 복귀, 다음 image prior_wdone 대기]
+```
+
+### 7.3 외부 모듈 emulation 요구사항
+
+- **Virtual Conv1**: c1c2 BRAM bank 에 입력 데이터 write (모든 IC 8개를 64b/word 로 packed format). `input_bank_sel` 과 반대 bank 에 write 후 `prior_wdone` 1-cycle pulse. 다음 `rdone` 받을 때까지 추가 write 없음 (ping-pong 한쪽만 사용).
+- **Virtual Maxpool**: `wdone` 받으면 c2pool BRAM bank 의 데이터 검증. 검증 완료 후 `succ_rdone` 1-cycle pulse (ping-pong bank 비움 알림).
+- **Virtual CSR**: 시스템 시작 시 `start` 1-cycle pulse 1번 (LOAD_WEIGHTS 진입용).
+- **c1c2 BRAM 모델**: SDP, L=2 (Primitive Output Register Enable). 11-bit addr, 64-bit data, 2 bank × 26×26 = 1352 entry 중 676 entry × 2 bank 사용.
+- **c2pool BRAM 모델**: SDP, 11-bit addr, 128-bit data, 2 bank × 576 entry.
+- **conv2_weight_bram BMG 모델**: SDP, 32-bit dual port, 576 depth, Port B Primitive Output Register Enable, Byte Write Disable. **REGCEB 는 conv2_engine 에서 상수 1 로 묶음** (마지막 weight 까지 출력 reg 통과 보장).
+
+### 7.4 검증 anchor
+
+- 각 cycle 의 register 값 dump 후 `conv2_timing_tables.md` 표 A1~A10 과 비교 (특히 cycle 56, 57, 125, 129, 1775, 1784, 1796, 1797).
+- 1 image 처리 후 c2pool BRAM 내용 = `scripts/golden_sim/0_reference.py` 의 `fmap2[0]` 와 bit-exact.
+
+---
+
+## 8. 참조 문서
+
+- **`conv2_timing_tables.md`** — cycle-by-cycle 표 + verification anchors. testbench 검증의 정본.
 - **`conv2_timing.md`** — 상세 timing 분석 + open items + 책임 분리 설명. AI/long-form 용.
 - **`../../CONV2_TIMING_FIX.md`** — c1c2 BRAM L=1 → L=2 fix 의 cycle-by-cycle 증명.
 - **`../../docs/DSP48E1_signed8x8_SIMD_Packing.md`** — SIMD packing 알고리즘.
-- **`conv2_fsm.v`** — FSM 코드. 헤더 주석에 상태 전이 조건 + 카운터 의미 상세.
+- **`conv2_engine.v`** — top-level 코드. sub-module 인스턴스화, delay pipeline, c2pool write/handshake 생성.
+- **`conv2_fsm.v`** — FSM 코드. 헤더 주석에 상태 전이 + 카운터 의미 상세.
 - **`weight_loader.v`** — weight 적재 cycle 정합성 (3-stage delay 매칭).
+- **`scripts/golden_sim/0_reference.py`** — Python reference, expected output 생성.
+- **`scripts/header_hex_gen/conv2_simd_pack.py`** — weight pre-pack, SIMD exhaustive verification 포함.
 
 ---
 
-## 8. 명명 규칙 (이 모듈 한정)
+## 9. 명명 규칙 (이 모듈 한정)
 
 | Prefix / suffix | 의미 |
 |---|---|
@@ -205,4 +287,5 @@ module conv2_engine (
 | `*_bank_sel` | ping-pong bank index (1-bit) |
 | `kw_cnt` (FSM) / `sel` (PE) | K_col index (0/1/2). 같은 개념 — 미래에 한 이름으로 통일 권장. |
 | `row_cnt`, `col_cnt` | BRAM read raster 좌표 (cap @ 25) |
-| `output_pixel_cnt` | 완성된 출력 픽셀 수 (0..576). datapath 의 c2pool write addr 와 공유. |
+| `output_pixel_cnt` (FSM) | 완성된 출력 픽셀 수 (0..576). PE input 시점. |
+| `c2pool_write_addr` (engine) | c2pool BRAM 의 다음 write 주소 (0..575). c2pool_we 마다 +1, pipeline 12 cycle 후 도착. |
