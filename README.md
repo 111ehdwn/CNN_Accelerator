@@ -54,23 +54,23 @@ Output Logit (10) → argmax
 
 ### Phase 0 — Sobel Baseline (완료)
 
-`AS1_Sobel_Baseline/` 에 위치. 102×102 grayscale 이미지에 대한 3×3 Sobel edge detection IP. CNN 가속기를 위한 기본 인프라(Line buffer + 3×3 window register, AXI CSR 슬레이브, BRAM Port A/B 분리, PS-PL 데이터 전송 프로토콜) 를 검증하는 단계.
+`AS1_Sobel_Baseline/` 에 위치.정 102×102 grayscale 이미지에 대한 3×3 Sobel edge detection IP. CNN 가속기를 위한 기본 인프라(Line buffer + 3×3 window register, AXI CSR 슬레이브, BRAM Port A/B 분리, PS-PL 데이터 전송 프로토콜) 를 검증하는 단계.
 
 ### Phase 1 — INT8 Direct CNN Accelerator (진행 중)
 
 `RTL/` 에서 본격적으로 시작. 명세 그대로의 INT8 Direct Convolution 으로 전체 파이프라인 구현. 1만 장 처리 latency 의 기준선(baseline) 을 확보하는 단계.
 
-- Output Stationary 데이터플로우 채택
-- Conv2 기준 `oc_par × ic_par × K × K = 8 × 2 × 3 × 3 = 144 DSP` 사용
+- Output Stationary + Weight Stationary 데이터플로우 채택
+- Conv1 기준 `oc_par × ic_par × KH × KW = 2 × 2 × 3 × 3 = 18 DSP` 사용
+- Conv2 기준 `oc_par × ic_par × KH = 8 × 16 × 3 = 192 DSP` 사용
 - 채널별 line buffer + window register 로 streaming 처리
-- 사이클 단위 동작 분해는 `docs/imple_1.md` 참조
 
 ### Phase 2 — Winograd Conv2 가속 (예정)
 
 Conv2 가 전체 latency 의 병목임을 확인했으므로, F(4,3) 또는 complex F(4,3) Winograd 변환으로 Conv2 의 multiply 수를 줄여 1만 장 처리 시간을 단축한다.
 
 - 8×8 INT8 SIMD packing 알고리즘은 `docs/DSP48E1_signed8x8_SIMD_Packing.md` 에 정리
-- 알고리즘 reference 구현은 `sim/3_complex_winograd_f(4,3).py`
+- 알고리즘 reference 구현은 `scripts/golden_sim/1_complex_winograd_f(4,3).py`
 
 ### Phase 3 — 최적화
 
@@ -102,15 +102,14 @@ Block Design (Vivado GUI)
 ├── AXI Uartlite (debug)
 └── Custom IP
     ├── csr_slave_axi_inner (수정 버전)
-    └── cnn_accel_top
+    └── cnn_accelerator
         ├── conv1_engine (Direct conv, DSP+LUT mult)
         │   ├── input_bram (BRAM × 2 bank)
         │   ├── conv1_w_bram
-        │   └── pe_array
+        │   └── pe_array  ※ core_module (line_buffer, window_register, pe_cell, truncate_relu) 인스턴스화
         ├── conv2_engine (Direct baseline, Winograd stretch)
         │   ├── conv2_w_bram
-        │   ├── line_buffer × 8
-        │   └── pe_array
+        │   └── pe_array  ※ core_module 공용 (line_buffer × 8 포함)
         ├── maxpool_engine
         ├── fc_engine
         │   ├── fc_w_bram
@@ -124,6 +123,7 @@ Block Design (Vivado GUI)
 - **AXI BRAM Controller × 4** — 입력 이미지와 세 종류의 weight (Conv1, Conv2, FC) 가 각각 독립된 BRAM 에 매핑되어 PS 가 병렬로 적재 가능
 - **Reset 트리** — `Processor System Reset` 이 외부 버튼과 Clocking Wizard `locked` 를 받아 모든 AXI peripheral 및 가속기 IP 의 `peripheral_aresetn` 을 동기 release
 - **`cnn_accel_top` 내부 dataflow** — Conv1 → Conv2 → MaxPool → FC → argmax 의 single-image inference 파이프라인. `ping_pong_buffer` 로 stage 간 producer/consumer 를 분리해 연속 1만 장 추론의 throughput 을 끌어올림
+- **`core_module` 공용화** — `line_buffer`, `window_register`, `pe_cell`, `truncate_relu` 는 `RTL/core_module/` 에 분리하여 conv1_engine / conv2_engine 이 동일 PE 빌딩 블록을 인스턴스화. parameter 로 channel / output width 만 조정
 - **결과 출력** — `argmax_unit` 이 10-class logit 에서 4-bit class index 와 `img_done` 신호를 만들어 PS 로 보고
 
 ---
@@ -134,8 +134,16 @@ Block Design (Vivado GUI)
 CNN_Accelerator/
 ├── AS1_Sobel_Baseline/   # Phase 0: Sobel edge detector IP (인프라 검증용)
 ├── RTL/                  # Phase 1+: CNN 가속기 RTL (메인 산출물)
-├── sim/                  # Python reference / 양자화 / Winograd 알고리즘 검증
-├── data_int8/            # 학습 완료된 weight 와 reference input/output (.npy)
+├── TB/                   # Verilog testbench (현재 비어 있음, 엔진별 추가 예정)
+├── scripts/              # Python reference / weight·activation 변환 스크립트
+│   ├── golden_sim/       # 명세 검증 reference (bit-exact 비교, Winograd 알고리즘)
+│   ├── header_gen/       # SIMD-packed weight 를 C header 로 변환
+│   └── hex_gen/          # Verilog $readmemh 용 hex dump 생성
+├── data/                 # 학습 완료된 weight 와 reference 입출력
+│   ├── npy/              # .npy 원본 (input, weight, expected output)
+│   ├── headers_simd/     # scripts/header_gen 산출물
+│   ├── hex_layer_by_layer/ # scripts/hex_gen 산출물
+│   └── params.zip        # 원본 파라미터 묶음
 └── docs/                 # 설계 명세, 구현 계획, 알고리즘 문서, 협업 가이드
 ```
 
@@ -156,37 +164,46 @@ Phase 1 이후 모든 CNN 가속기 RTL 이 모이는 메인 디렉토리. 위 B
 
 - `cnn_accel_top.v` — Top IP. BRAM1 (input) / BRAM2 (output) 을 내장하고, PL-side 는 cnn_accelerator 와 연결, PS-side 는 외부 AXI BRAM Controller 와 연결
 - `axi_csr_inner.v` — start / done 제어용 AXI-Lite CSR (Sobel 단계 CSR 의 진화 버전)
+- `core_module/` — Conv1/Conv2 공용 PE 빌딩 블록
+  - `line_buffer.v`, `window_register.v` — streaming stencil 처리용 라인/윈도우 버퍼
+  - `pe_cell.v` — INT8 MAC 단위 PE (parameter 화)
+  - `truncate_relu.v` — LSB-10bit shift + saturation + ReLU (parameter 화)
+- `conv1/` — Conv1 engine
+  - `conv1_engine.v`, `conv1_fsm.v`, `adder_tree.v`, `weight_loader.v`
+- `conv2/` — Conv2 engine (구현 진행 중, 현재 비어 있음)
 
-(이후 conv1_engine / conv2_engine / maxpool_engine / fc_engine / argmax_unit / ping_pong_buffer 등이 추가될 예정)
+(이후 maxpool_engine / fc_engine / argmax_unit / ping_pong_buffer 등이 추가될 예정)
 
-### `sim/`
+### `scripts/`
 
-하드웨어 구현에 앞서 알고리즘적으로 명세를 검증하는 Python 시뮬레이터.
+하드웨어 구현에 앞서 알고리즘적으로 명세를 검증하고, 검증된 데이터를 RTL/SW 가 먹을 수 있는 형식으로 변환하는 Python 스크립트 모음.
 
-- `reference_core.py` — 공통 유틸리티. `.npy` 로드, MNIST 라벨 로드, bit-exact 비교, `Conv2D_Spec` / `FC_Spec` 등 명세 saturation 규칙 (LSB-10bit shift + clip[-128,127]) 을 갖는 base 레이어 클래스 정의
-- `0_reference.py` — 시나리오 #1: INT8 Direct 컨볼루션. 명세 그대로 구현하여 `data_int8/output.npy` 와 bit-exact 일치 검증
-- `1_quantize.py` — Weight / Activation 추가 양자화 실험 (예: INT4)
-- `3_complex_winograd_f(4,3).py` — Complex F(4,3) Winograd 변환 reference 구현
-- `MNIST_example.png` — 시각 자료
+- `golden_sim/` — 명세 검증 reference
+  - `reference_core.py` — 공통 유틸리티. `.npy` 로드, MNIST 라벨 로드, bit-exact 비교, `Conv2D_Spec` / `FC_Spec` 등 명세 saturation 규칙 (LSB-10bit shift + clip[-128,127]) 을 갖는 base 레이어 클래스 정의
+  - `0_reference.py` — INT8 Direct 컨볼루션 reference. 명세 그대로 구현하여 `data/npy/output.npy` 와 bit-exact 일치 검증
+  - `1_complex_winograd_f(4,3).py` — Complex F(4,3) Winograd 변환 reference 구현
+- `header_gen/` — SIMD-packed weight 를 Vitis 펌웨어용 C header 로 변환 (산출물: `data/headers_simd/`)
+- `hex_gen/` — Verilog `$readmemh` 가 읽을 수 있는 hex dump 생성 (산출물: `data/hex_layer_by_layer/`)
 
-### `data_int8/`
+### `data/`
 
-학습이 완료되어 양자화까지 끝난 INT8 파라미터 및 검증용 입출력.
+학습이 완료되어 양자화까지 끝난 INT8 파라미터 및 검증용 입출력. `scripts/` 산출물의 저장소 역할도 겸한다.
 
-- `input.npy` — 예제 입력 이미지
-- `layer1_0_weight.npy` — Conv1 weight (8, 1, 3, 3)
-- `layer2_0_weight.npy` — Conv2 weight (16, 8, 3, 3)
-- `fc1_weight.npy` — FC weight (10, 2304)
-- `output.npy` — reference 모델의 expected output (bit-exact 검증 목표)
-- `mnist_cache/` — torchvision MNIST 캐시 (1만 장 평가에 사용)
+- `npy/` — 원본 `.npy` 파라미터 및 reference 입출력
+  - `input.npy` — 예제 입력 이미지
+  - `layer1_0_weight.npy` — Conv1 weight (8, 1, 3, 3)
+  - `layer2_0_weight.npy` — Conv2 weight (16, 8, 3, 3)
+  - `fc1_weight.npy` — FC weight (10, 2304)
+  - `output.npy` — reference 모델의 expected output (bit-exact 검증 목표)
+- `headers_simd/` — `scripts/header_gen` 산출물 (Vitis 펌웨어가 include 하는 weight header)
+- `hex_layer_by_layer/` — `scripts/hex_gen` 산출물 (Verilog testbench / BRAM init 용 hex)
 - `params.zip` — 원본 파라미터 묶음
 
 ### `docs/`
 
 설계·구현·협업 관련 모든 문서.
 
-- `constraint.md` — 보드/자원 한도, 타겟 CNN, 명세 (변경 불가 사항), 결정 사항
-- `imple_1.md` — Conv2 엔진의 사이클 단위 동작 분해, dataflow 결정, line buffer 구조 등 구현 상세
+- `project_overview.md` — 보드/자원 한도, 타겟 CNN, 결정 사항, 업무 분담 결정 내역
 - `DSP48E1_signed8x8_SIMD_Packing.md` — DSP48E1 단일 multiplier 로 signed 8×8 두 개를 동시에 수행하는 SIMD packing 알고리즘 (Winograd 단계 핵심 기법)
 - `cowork_guide.md` — Git / GitHub / VSCode / Python 환경 세팅부터 PR 까지의 협업 가이드
 - `pdfs/` — 과제 안내문, 베이스라인 보고서, 구현 계획 PDF, Winograd 참고 자료
@@ -197,7 +214,7 @@ Phase 1 이후 모든 CNN 가속기 RTL 이 모이는 메인 디렉토리. 위 B
 
 전형적인 작업 사이클은 다음과 같다.
 
-1. **알고리즘 검증 (sim)** — Python 으로 명세 구현, `data_int8/output.npy` 와 bit-exact 일치 확인
+1. **알고리즘 검증 (scripts/golden_sim)** — Python 으로 명세 구현, `data/npy/output.npy` 와 bit-exact 일치 확인
 2. **RTL 설계 (RTL)** — 동일 동작을 Verilog 로 옮기고, testbench 로 동일 입력에 대한 동일 출력 검증
 3. **합성 & 보드 검증 (Vivado / Vitis)** — 위 Block Design 으로 bitstream 빌드 → Arty A7-100T 에 적재 → PS 측 baremetal app 으로 MNIST 1만 장 분류 수행
 4. **측정 & 최적화** — 1만 장 처리 총 시간 측정 후 다음 마일스톤으로
@@ -208,7 +225,6 @@ Phase 1 이후 모든 CNN 가속기 RTL 이 모이는 메인 디렉토리. 위 B
 
 ## 6. 참고 문서 빠른 링크
 
-- 설계 명세: [`docs/constraint.md`](docs/constraint.md)
-- Conv2 사이클 분해: [`docs/imple_1.md`](docs/imple_1.md)
+- 프로젝트 명세 및 계획: [`docs/project_overview.md`](docs/project_overview.md)
 - DSP48E1 SIMD Packing: [`docs/DSP48E1_signed8x8_SIMD_Packing.md`](docs/DSP48E1_signed8x8_SIMD_Packing.md)
 - 협업 가이드: [`docs/cowork_guide.md`](docs/cowork_guide.md)

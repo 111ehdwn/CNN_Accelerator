@@ -44,7 +44,7 @@ import numpy as np
 # ##                                                                         ##
 # =============================================================================
 
-def load_assignment_data(data_dir: str = "../data_int8") -> dict:
+def load_assignment_data(data_dir: str = "../data") -> dict:
     """
     과제 .npy 5개 일괄 로드.
 
