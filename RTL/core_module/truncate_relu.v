@@ -2,15 +2,21 @@
 //////////////////////////////////////////////////////////////////////////////////
 // Module Name: truncate_relu
 // Description:
-//   - IC adder tree 출력(24비트 signed)을 INT8로 변환 (양자화 후처리)
+//   - 누적 결과(24비트 signed)을 INT8로 변환 (양자화 후처리)
 //   - 처리 순서: arithmetic right shift >>> 10  →  saturate [-128, 127]  →  ReLU
 //
-//   비트 폭 분석:
-//     mul (PE 출력):         signed 17-bit  (= [-128]×[-127] ~ 127×127)
-//     K_row sum (3 누적):    signed 19-bit  (17 + log2(3))
-//     K_col accum (3 cycle): signed 21-bit  (19 + log2(3))
-//     IC sum (8 누적):       signed 24-bit  (21 + log2(8))
-//     → 입력 sum 폭: 24-bit
+//   입력 sum 폭: 24-bit (signed). 도달 경로는 layer 마다 다름:
+//
+//     Conv1 (K=9 unroll, 9개 psum 합 → IC=1):
+//       mul (PE 출력):          signed 17-bit  (= [-128]×[-127] ~ 127×127)
+//       9 psum 합 (adder_tree): signed 24-bit  (17 + log2(9) = 21, 여유 24)
+//
+//     Conv2 (K_row × IC fused 24:1 tree + K_col 3-cycle 누적):
+//       mul (PE 출력):                 signed 17-bit
+//       K_row × IC 합 (24:1 tree):     signed 22-bit  (17 + log2(24) = 22)
+//       K_col 누적 (3-cycle):          signed 24-bit  (22 + log2(3) = 24)
+//
+//     양쪽 모두 truncate_relu 입력 폭 24-bit 로 정합.
 //
 //   >>> 10의 이유:
 //     weight, activation 모두 INT8 quantized (scale factor = 2^10)
@@ -27,14 +33,15 @@
 //     양수 → 그대로
 //     → 최종 출력 범위: [0, 127]
 //
-//   Layer별 재사용:
-//     Conv1: N=4 (OC_pair=2 × SIMD=2)
+//   Layer별 N (동시 출력 채널 수):
+//     Conv1: N=4  (OC_pair=2 × SIMD=2)
 //     Conv2: N=16 (OC_pair=8 × SIMD=2)
+//     FC:    별도 (TBD)
 //
 //   Latency: 1 cycle (input sum → output out)
 //
 //   write_done 등 control 신호:
-//     이 모듈은 순수 datapath. 상위 fsm에서 처리.
+//     이 모듈은 순수 datapath. 상위 fsm 에서 처리.
 //////////////////////////////////////////////////////////////////////////////////
 
 module truncate_relu #(

@@ -2,29 +2,36 @@
 //////////////////////////////////////////////////////////////////////////////////
 // Module Name: window_register
 // Description:
-//   - 3×3 sliding window register (Conv1 전용, IC=1)
-//   - Sobel의 win_r0/r1/r2 구조를 독립 모듈로 분리
+//   - 3×3 sliding window register, 1-stream 일반 모듈
+//   - Conv1: 1 instance (IC=1)
+//   - Conv2: 8 instance (IC=8, IC당 1개)
+//   - en=1 cycle 의 edge 에 left-shift; en=0 면 hold
 //
-//   데이터 흐름 (Sobel과 동일):
-//     BRAM → (1사이클) → b1_douta
-//     b1_douta → lb1(DEPTH=27) → (28사이클 지연) → lb1_out
-//     lb1_out  → lb2(DEPTH=27) → (28사이클 지연) → lb2_out
+//   데이터 흐름:
+//     BRAM (Port B, L=1 또는 2)        → row2_in   (가장 최신 행)
+//     row2_in → line_buffer1 → lb1.dout → row1_in  (1행 지연)
+//     row1_in → line_buffer2 → lb2.dout → row0_in  (2행 지연)
 //
-//   window 구조:
-//     row0 (가장 위, 오래된 행): lb2_out 흐름
-//     row1 (중간 행):            lb1_out 흐름
-//     row2 (가장 아래, 최신 행): bram_out 흐름
+//   window 구조 (en=1 cycle 의 edge 에 shift):
+//     row0 (가장 오래된 행): row0_in 흐름
+//     row1 (중간 행):       row1_in 흐름
+//     row2 (가장 최신 행):  row2_in 흐름
 //
-//     win[row][0]=left(오래된), win[row][1]=center, win[row][2]=right(최신)
+//     win[row][0]=left(가장 오래된 col), win[row][1]=center, win[row][2]=right(최신)
 //
-//   출력 픽셀 순서 (K index):
+//   출력 (9 픽셀 평탄화):
 //     k0=win[0][0]  k1=win[0][1]  k2=win[0][2]
 //     k3=win[1][0]  k4=win[1][1]  k5=win[1][2]
 //     k6=win[2][0]  k7=win[2][1]  k8=win[2][2]
 //
-//   유효 window 조건:
-//     col >= 2 && row >= 2  (Sobel의 w_valid와 동일 원리)
-//     → 외부 FSM에서 pixel_valid 생성 후 입력
+//   col_sel 기반 PE input 선택은 외부에서 수행:
+//     col_sel=0 → (k0, k3, k6)  // row 0/1/2 의 col 0 (가장 오래된)
+//     col_sel=1 → (k1, k4, k7)
+//     col_sel=2 → (k2, k5, k8)
+//
+//   유효 window 조건 (외부 FSM 책임):
+//     Conv1: col >= 2 && row >= 2 (28×28 → 26×26 출력)
+//     Conv2: PIPELINE_FILL 종료 + counter 진행 (상세는 conv2_timing_tables.md)
 //////////////////////////////////////////////////////////////////////////////////
 
 module window_register #(
