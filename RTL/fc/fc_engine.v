@@ -3,8 +3,8 @@
 // Description:
 //
 //   ★ 구조 요약:
-//     fc_simd_fsm        : pair 0~4 순차, spatial 0~143 scan (720 COMPUTE cycle)
-//     fc_simd_pe_array   : 16 DSP SIMD (1 pair × 16 ch)
+//     fc_simd_fsm        : pair 0~4 순차, spatial 0~287 scan (1440 COMPUTE cycle)
+//     fc_simd_pe_array   : 16 DSP SIMD (1 pair × 8 ch)
 //     fc_simd_adder_tree : 16:1 × 2 OC (4-stage)
 //     fc_simd_accumulator: 2 OC 누산 → pair 완료 시 logit0/1 pulse
 //     [logit_reg 10개]   : engine 내부 레지스터 (logit 수집)
@@ -12,10 +12,10 @@
 //
 //   ★ Pipeline depth: BRAM 2 + pe 2 + adder 4 + acc 1 = 9  (ACC_DELAY = 8)
 //
-//   ★ Weight BRAM: 128-bit × 720
-//     addr = pair*144 + s  (pair 0~4, s 0~143)
-//     [63:0]   = w0 (OC_even 16ch)
-//     [127:64] = w1 (OC_odd  16ch)
+//   ★ Weight BRAM: 128-bit × 1440
+//     addr = pair*288 + s  (pair 0~4, s 0~287)
+//     [63:0]   = w0 (OC_even 8ch)
+//     [127:64] = w1 (OC_odd  8ch)
 //
 //   ★ DSP: 16개 (20개 제약 이내)
 //////////////////////////////////////////////////////////////////////////////////
@@ -29,17 +29,17 @@ module fc_engine #(
 
     //==========================================================================
     // FC weight BRAM Port A (PS write)
-    // 128-bit × 720, addr = pair*144 + spatial
+    // 128-bit × 1440, addr = pair*288 + spatial
     //==========================================================================
     input  wire         fcw_ena,
-    input  wire [9:0]   fcw_addra,   // 0..719
+    input  wire [10:0]  fcw_addra,   // 0..1439
     input  wire [127:0] fcw_dina,
 
     //==========================================================================
     // poolfc buffer (read, L=2)
     //==========================================================================
     output wire         poolfc_re,
-    output wire [8:0]   poolfc_addr,
+    output wire [9:0]   poolfc_addr,
     input  wire [127:0] poolfc_dout,
 
     //==========================================================================
@@ -58,9 +58,9 @@ module fc_engine #(
     //==========================================================================
     // 1. FSM
     //==========================================================================
-    wire [7:0] fsm_s_cnt;
+    wire [8:0] fsm_s_cnt;
     wire [2:0] fsm_pair_cnt;
-    wire [9:0] fsm_wbase;
+    wire [10:0] fsm_wbase;
     wire       fsm_comp_v;
     wire       fsm_s_first;
     wire       fsm_s_last;
@@ -99,12 +99,12 @@ module fc_engine #(
     wire rd_en_ext = fsm_comp_v | rd_v_d1 | rd_v_d2 | rd_v_d3;
 
     assign poolfc_re   = rd_en_ext;
-    assign poolfc_addr = {fsm_input_bank_sel, fsm_s_cnt};
+    assign poolfc_addr = {fsm_input_bank_sel, fsm_s_cnt[8:0]};
 
     //==========================================================================
-    // 3. Weight BRAM (128-bit × 720)
+    // 3. Weight BRAM (128-bit × 1440)
     //==========================================================================
-    wire [9:0]   fcw_addrb = fsm_wbase + {2'd0, fsm_s_cnt};
+    wire [10:0]  fcw_addrb = fsm_wbase + {2'd0, fsm_s_cnt};
     wire [127:0] fcw_doutb;
 
     fc_weight_bram fcw_bmg_inst (
@@ -120,8 +120,8 @@ module fc_engine #(
         .regceb (rd_en_ext)
     );
 
-    wire [63:0] w0_flat = fcw_doutb[ 63:  0];   // OC_even
-    wire [63:0] w1_flat = fcw_doutb[127: 64];   // OC_odd
+    wire [63:0] w0_flat = fcw_doutb[ 63:  0];   // OC_even 8ch
+    wire [63:0] w1_flat = fcw_doutb[127: 64];   // OC_odd  8ch
 
     //==========================================================================
     // 4. PE enable 정렬 (BRAM L=2)

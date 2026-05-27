@@ -37,8 +37,8 @@ module fc_pe_array (
     generate
         for (ch = 0; ch < 16; ch = ch + 1) begin : gen_ch
             wire signed [7:0]  x_ch  = x_flat [ch*8    +: 8];
-            wire signed [7:0]  w0_ch = w0_flat[ch*8    +: 8];
-            wire signed [7:0]  w1_ch = w1_flat[ch*8    +: 8];
+            wire signed [7:0]  w0_ch = (ch < 8) ? w0_flat[ch*8 +: 8] : 8'sd0;
+            wire signed [7:0]  w1_ch = (ch < 8) ? w1_flat[ch*8 +: 8] : 8'sd0;
             wire signed [15:0] p0_ch;
             wire signed [15:0] p1_ch;
 
