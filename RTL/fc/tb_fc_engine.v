@@ -117,7 +117,7 @@ module tb_fc_engine;
     // 내부 신호 tap
     //==========================================================================
     wire                    logit_valid_w = dut.logit_valid;
-    wire [2:0]              acc_pair_w    = dut.acc_pair;
+    wire [2:0]              acc_pair_w    = dut.acc_pair_latch;  // latch된 pair 사용
 
     wire signed [ACC_W-1:0] lr [0:9];
     assign lr[0] = dut.logit_reg[0]; assign lr[1] = dut.logit_reg[1];
@@ -176,11 +176,11 @@ module tb_fc_engine;
         if (lv_d1) begin
             pair_done_cnt = pair_done_cnt + 1;
             case (pair_d1)
-                3'd1: check_pair(0, 1, lr[2][23:0], lr[3][23:0], EXP_OC0, EXP_OC1);
-                3'd2: check_pair(2, 3, lr[4][23:0], lr[5][23:0], EXP_OC2, EXP_OC3);
-                3'd3: check_pair(4, 5, lr[6][23:0], lr[7][23:0], EXP_OC4, EXP_OC5);
-                3'd4: check_pair(6, 7, lr[8][23:0], lr[9][23:0], EXP_OC6, EXP_OC7);
-                3'd0: check_pair(8, 9, lr[0][23:0], lr[1][23:0], EXP_OC8, EXP_OC9);
+                3'd0: check_pair(0, 1, lr[0][23:0], lr[1][23:0], EXP_OC0, EXP_OC1);
+                3'd1: check_pair(2, 3, lr[2][23:0], lr[3][23:0], EXP_OC2, EXP_OC3);
+                3'd2: check_pair(4, 5, lr[4][23:0], lr[5][23:0], EXP_OC4, EXP_OC5);
+                3'd3: check_pair(6, 7, lr[6][23:0], lr[7][23:0], EXP_OC6, EXP_OC7);
+                3'd4: check_pair(8, 9, lr[8][23:0], lr[9][23:0], EXP_OC8, EXP_OC9);
                 default:
                     $display("[WARN] unexpected pair_d1=%0d @ %0t ns", pair_d1, $time);
             endcase

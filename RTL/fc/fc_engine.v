@@ -228,8 +228,21 @@ module fc_engine #(
 
     //==========================================================================
     // 8. Logit collection
+    //
+    // acc_pair = pair_pipe[7] 는 logit_valid 가 출력되는 사이클(T+1)에
+    // 이미 다음 pair 값으로 시프트되어 있다.
+    // acc_last pulse 가 뜨는 사이클(T)의 acc_pair 가 진짜 현재 pair 이므로
+    // 그 값을 래치하여 logit_reg 인덱스로 사용한다.
     //==========================================================================
     reg signed [ACC_W-1:0] logit_reg [0:9];
+    reg [2:0] acc_pair_latch;
+
+    always @(posedge clk) begin
+        if (rst)
+            acc_pair_latch <= 3'd0;
+        else if (acc_en && acc_last)
+            acc_pair_latch <= acc_pair;
+    end
 
     integer oc;
     always @(posedge clk) begin
@@ -237,8 +250,8 @@ module fc_engine #(
             for (oc = 0; oc < 10; oc = oc + 1)
                 logit_reg[oc] <= {ACC_W{1'b0}};
         end else if (logit_valid) begin
-            logit_reg[{1'b0, acc_pair} * 2    ] <= logit_even_acc;
-            logit_reg[{1'b0, acc_pair} * 2 + 1] <= logit_odd_acc;
+            logit_reg[{1'b0, acc_pair_latch} * 2    ] <= logit_even_acc;
+            logit_reg[{1'b0, acc_pair_latch} * 2 + 1] <= logit_odd_acc;
         end
     end
 
@@ -257,7 +270,7 @@ module fc_engine #(
         if (rst)
             all_ready <= 1'b0;
         else
-            all_ready <= logit_valid && (acc_pair == 3'd4);
+            all_ready <= logit_valid && (acc_pair_latch == 3'd4);
     end
 
     //==========================================================================
