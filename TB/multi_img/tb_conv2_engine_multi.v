@@ -283,83 +283,151 @@ module tb_conv2_engine_multi;
     endtask
 
     //==========================================================================
-    // Main
+    // Inter-process counters (auto-update)
+    //   rdone_count : Conv2 가 c1c2 bank 비운 횟수 → conv1_process backpressure
+    //   wdone_count : Conv2 가 c2pool bank 채운 횟수 → maxpool_process 동기
     //==========================================================================
-    integer i;
-    initial begin
+    integer rdone_count = 0;
+    integer wdone_count = 0;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            rdone_count <= 0;
+            wdone_count <= 0;
+        end else begin
+            if (rdone) rdone_count <= rdone_count + 1;
+            if (wdone) wdone_count <= wdone_count + 1;
+        end
+    end
+
+    //==========================================================================
+    // Sync between processes
+    //==========================================================================
+    reg     all_done_flag       = 1'b0;
+    integer cycle_at_start_pulse = 0;
+
+    //==========================================================================
+    // PROCESS 1: Main — reset, start, wait for completion, report
+    //==========================================================================
+    integer i_main;
+    initial begin : main_process
         $display("\n==========================================");
-        $display("  Conv2 multi-image testbench (N=%0d)", N_IMAGES);
+        $display("  Conv2 multi-image testbench (N=%0d, parallel)", N_IMAGES);
         $display("==========================================");
         $display("  CONV1_ALL_HEX = %s", `CONV1_ALL_HEX);
         $display("  CONV2_ALL_HEX = %s", `CONV2_ALL_HEX);
         $display("  WEIGHT_HEX    = %s", `WEIGHT_HEX);
         $display("");
 
-        // ---- 1. Load all image data (single big hex per category)
+        // Load data
         $readmemh(`CONV1_ALL_HEX, c1c2_data);
         $readmemh(`CONV2_ALL_HEX, c2pool_data);
-        $display("[TB] Loaded c1c2  (%0d entries) + c2pool (%0d entries)",
+        $readmemh(`WEIGHT_HEX, dut.c2w_bmg_inst.mem);
+        $display("[TB] Loaded c1c2 (%0d) + c2pool (%0d) + weight (576)",
                  N_IMAGES * 676, N_IMAGES * 576);
 
-        // ---- 2. Load weight BMG (behavioral)
-        $readmemh(`WEIGHT_HEX, dut.c2w_bmg_inst.mem);
-        $display("[TB] Loaded weight (576 entries)");
-
-        // ---- 3. Init statistics
-        for (i = 0; i < N_IMAGES; i = i + 1) begin
-            per_image_mm[i] = 0;
-            cycle_at_img_start[i] = 0;
-            cycle_at_wdone[i]     = 0;
+        // Init statistics
+        for (i_main = 0; i_main < N_IMAGES; i_main = i_main + 1) begin
+            per_image_mm[i_main]      = 0;
+            cycle_at_img_start[i_main] = 0;
+            cycle_at_wdone[i_main]    = 0;
         end
 
-        // ---- 4. Reset
+        // Init driving signals (defensive)
+        c1c2_ena_a    = 1'b0;
+        c1c2_wea_a    = 8'h00;
+        c2pool_enb_b  = 1'b0;
+        c2pool_addr_b = 11'd0;
+        prior_wdone   = 1'b0;
+        succ_rdone    = 1'b0;
+        start         = 1'b0;
+
+        // Reset
         rst = 1'b1;
         repeat (10) @(posedge clk);
         @(negedge clk);
         rst = 1'b0;
         $display("[TB] @ cycle %0d : reset released", cycle_cnt);
 
-        // ---- 5. Start pulse (LOAD_WEIGHTS 진입)
+        // Start pulse (LOAD_WEIGHTS 진입, 1회만)
         @(negedge clk); start = 1'b1;
         @(negedge clk); start = 1'b0;
-        $display("[TB] @ cycle %0d : start pulsed", cycle_cnt);
+        cycle_at_start_pulse = cycle_cnt;
+        $display("[TB] @ cycle %0d : start pulsed", cycle_at_start_pulse);
 
-        // ---- 6. Main loop: per-image (sequential, ping-pong toggle 자동)
-        for (i = 0; i < N_IMAGES; i = i + 1) begin
-            cycle_at_img_start[i] = cycle_cnt;
+        // 다른 process 들이 알아서 끝낼 때까지 대기
+        wait (all_done_flag == 1'b1);
 
-            write_image(i);
-            pulse_prior_wdone();
-            @(posedge wdone);
-            cycle_at_wdone[i] = cycle_cnt;
-
-            // 추가 settle cycle (c2pool BMG 의 마지막 write 가 mem 에 반영 후)
-            repeat (3) @(posedge clk);
-
-            compare_image(i);
-            pulse_succ_rdone();
-
-            if (per_image_mm[i] == 0)
-                $display("[TB] img %3d : PASS  (%0d cycle)", i,
-                         cycle_at_wdone[i] - cycle_at_img_start[i]);
-            else
-                $display("[TB] img %3d : FAIL  (%0d mismatches)", i, per_image_mm[i]);
-        end
-
-        // ---- 7. Final report
+        // Final report
         $display("\n=========================================");
         $display("  FINAL RESULT");
         $display("=========================================");
-        $display("  images PASS  : %0d / %0d", images_pass, N_IMAGES);
-        $display("  total compare: %0d", N_IMAGES * 576);
-        $display("  total mismatch: %0d", total_mismatches);
+        $display("  images PASS    : %0d / %0d", images_pass, N_IMAGES);
+        $display("  total compare  : %0d", N_IMAGES * 576);
+        $display("  total mismatch : %0d", total_mismatches);
+        $display("  total cycles   : %0d (start → last wdone)",
+                 cycle_at_wdone[N_IMAGES-1] - cycle_at_start_pulse);
+        $display("  avg cycle/img  : %0d",
+                 (cycle_at_wdone[N_IMAGES-1] - cycle_at_start_pulse) / N_IMAGES);
         if (total_mismatches == 0 && images_pass == N_IMAGES)
-            $display("  *** PASS *** (all 100 images bit-exact)");
+            $display("  *** PASS *** (all %0d images bit-exact)", N_IMAGES);
         else
             $display("  *** FAIL ***");
         $display("=========================================");
 
         $finish;
+    end
+
+    //==========================================================================
+    // PROCESS 2: Virtual Conv1 — image 별 write + prior_wdone, ping-pong backpressure
+    //
+    //   Backpressure: 동시 in-flight image 수 ≤ 2 (ping-pong bank 한계).
+    //     pending = i - rdone_count  (image 까지 wrote 했으나 Conv2 가 아직 안 끝낸 수)
+    //     쓸 수 있는 조건: pending < 2
+    //==========================================================================
+    integer i_conv1;
+    initial begin : conv1_process
+        // wait reset 해제
+        wait (rst == 1'b0);
+        @(negedge clk);
+
+        for (i_conv1 = 0; i_conv1 < N_IMAGES; i_conv1 = i_conv1 + 1) begin
+            // Backpressure
+            wait ((i_conv1 - rdone_count) < 2);
+
+            cycle_at_img_start[i_conv1] = cycle_cnt;
+            write_image(i_conv1);
+            pulse_prior_wdone();
+        end
+    end
+
+    //==========================================================================
+    // PROCESS 3: Virtual Maxpool — wdone 마다 compare + succ_rdone
+    //==========================================================================
+    integer i_max;
+    initial begin : maxpool_process
+        wait (rst == 1'b0);
+        @(negedge clk);
+
+        for (i_max = 0; i_max < N_IMAGES; i_max = i_max + 1) begin
+            @(posedge wdone);
+            cycle_at_wdone[i_max] = cycle_cnt;
+
+            // settle a few cycles for c2pool mem 안정화
+            repeat (3) @(posedge clk);
+
+            compare_image(i_max);
+            pulse_succ_rdone();
+
+            if (per_image_mm[i_max] == 0)
+                $display("[TB] img %3d : PASS  @ wdone cycle %0d", i_max, cycle_at_wdone[i_max]);
+            else
+                $display("[TB] img %3d : FAIL  @ wdone cycle %0d  (%0d mm)",
+                         i_max, cycle_at_wdone[i_max], per_image_mm[i_max]);
+        end
+
+        // Main 에게 종료 알림
+        all_done_flag = 1'b1;
     end
 
     //==========================================================================
