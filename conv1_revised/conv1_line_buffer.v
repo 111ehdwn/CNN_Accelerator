@@ -18,7 +18,7 @@ module conv1_line_buffer #(
     parameter integer DEPTH = 27
 )(
     input  wire             clk,
-    input  wire             rst_n,      // active-low 동기 리셋
+    input  wire             rst,        // active-high 동기 리셋
     input  wire             en,
     input  wire [WIDTH-1:0] din,
     output reg  [WIDTH-1:0] dout
@@ -30,7 +30,7 @@ module conv1_line_buffer #(
 
     integer j;
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst) begin
             ptr  <= {ADDR_W{1'b0}};
             dout <= {WIDTH{1'b0}};
             // mem 초기화 (시뮬레이션 안전)

@@ -35,7 +35,7 @@ module conv1_pe_cell #(
     parameter integer ADDR_W = 1    // $clog2(DEPTH), DEPTH=2이면 1
 )(
     input  wire        clk,
-    input  wire        rst_n,
+    input  wire        rst,
 
     // Weight 적재
     input  wire [24:0]       packed_w,   // weight_loader 브로드캐스트
@@ -61,7 +61,7 @@ module conv1_pe_cell #(
 
     integer i;
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst) begin
             for (i = 0; i < DEPTH; i = i + 1)
                 w_regs[i] <= 25'd0;
         end else if (load_en) begin
@@ -155,10 +155,10 @@ DSP48E1 #(
         .CEALUMODE      (1'b1),  .CECARRYIN(1'b1),
         .CECTRL         (1'b1),  .CEINMODE (1'b1),
         // Reset - active registers (DSP48E1은 active-high → ~rst_n 변환)
-        .RSTA           (~rst_n),  .RSTB      (~rst_n),
-        .RSTM           (~rst_n),  .RSTP      (~rst_n),
-        .RSTCTRL        (~rst_n),  .RSTALUMODE(~rst_n),
-        .RSTINMODE      (~rst_n),  .RSTALLCARRYIN(~rst_n),
+        .RSTA           (rst),  .RSTB      (rst),
+        .RSTM           (rst),  .RSTP      (rst),
+        .RSTCTRL        (rst),  .RSTALUMODE(rst),
+        .RSTINMODE      (rst),  .RSTALLCARRYIN(rst),
         // Reset - inactive
         .RSTC           (1'b0),  .RSTD  (1'b0)
     );
@@ -177,7 +177,7 @@ DSP48E1 #(
     wire signed [16:0] raw1 = p1_slot[16:0] + $signed({1'b0, carry_val});
 
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst) begin
             mul0 <= 17'sd0;
             mul1 <= 17'sd0;
         end else if (en) begin

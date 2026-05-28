@@ -16,7 +16,7 @@
 
 module conv1_adder_tree (
     input  wire        clk,
-    input  wire        rst_n,
+    input  wire        rst,
     input  wire        en,
 
     input  wire signed [16:0] mul0_0, mul0_1, mul0_2, mul0_3, mul0_4,
@@ -30,7 +30,7 @@ module conv1_adder_tree (
 );
 
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst) begin
             sum0 <= 24'sd0;
             sum1 <= 24'sd0;
         end else if (en) begin

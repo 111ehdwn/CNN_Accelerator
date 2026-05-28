@@ -24,7 +24,7 @@ module conv1_window_register #(
     parameter integer WIDTH = 8
 )(
     input  wire             clk,
-    input  wire             rst_n,      // active-low 동기 리셋
+    input  wire             rst,        // active-high 동기 리셋
     input  wire             en,
 
     input  wire signed [WIDTH-1:0] row2_in,
@@ -42,7 +42,7 @@ module conv1_window_register #(
 
     integer i;
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst) begin
             for (i = 0; i < 3; i = i + 1) begin
                 win_r0[i] <= {WIDTH{1'b0}};
                 win_r1[i] <= {WIDTH{1'b0}};

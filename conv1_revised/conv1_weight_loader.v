@@ -20,7 +20,7 @@ module conv1_weight_loader #(
     parameter integer ADDR_W = 6
 )(
     input  wire        clk,
-    input  wire        rst_n,
+    input  wire        rst,
 
     input  wire        load_start,
     output reg         load_done,
@@ -48,7 +48,7 @@ module conv1_weight_loader #(
     wire [5:0] pe_idx_g2_r1 = latch_cnt - 6'd27;   // 27~35
 
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst) begin
             active        <= 1'b0;
             req_cnt       <= 6'd0;
             latch_cnt     <= 6'd0;

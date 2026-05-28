@@ -34,7 +34,7 @@
 
 module conv1_fsm (
     input  wire        clk,
-    input  wire        rst_n,
+    input  wire        rst,
     input  wire        start,
 
     // weight_loader 인터페이스
@@ -88,7 +88,7 @@ module conv1_fsm (
     wire run_state = (state == RUN1) || (state == RUN2);
 
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst) begin
             row <= 5'd0;
             col <= 5'd0;
         end else if (state == FLUSH1 || state == FLUSH2) begin
@@ -129,7 +129,7 @@ module conv1_fsm (
     // FSM
     //==========================================================================
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst) begin
             state      <= IDLE;
             load_start <= 1'b0;
             pipe_en    <= 1'b0;
@@ -243,7 +243,7 @@ module conv1_fsm (
 
     integer i;
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst) begin
             for (i = 0; i < PIPE_DELAY; i = i + 1) begin
                 valid_sr[i] <= 1'b0;
                 row_sr[i]   <= 5'd0;

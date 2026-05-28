@@ -2,7 +2,7 @@
 
 module conv1_truncate_relu (
     input  wire        clk,
-    input  wire        rst_n,
+    input  wire        rst,
     input  wire        en,
 
     input  wire signed [23:0] sum0,
@@ -44,7 +44,7 @@ module conv1_truncate_relu (
     // 출력 레지스터 업데이트
     //==========================================================================
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst) begin
             out0 <= 8'sd0;
             out1 <= 8'sd0;
             out2 <= 8'sd0;
