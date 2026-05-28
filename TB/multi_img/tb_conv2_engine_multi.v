@@ -20,12 +20,11 @@
 //     xelab -d HEX_DIR=\"C:/path/to/multi_img\" -d WEIGHT_HEX=\"C:/.../weights.hex\" ...
 //////////////////////////////////////////////////////////////////////////////////
 
-`ifndef HEX_DIR
-    `define HEX_DIR     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img"
-`endif
-`ifndef WEIGHT_HEX
-    `define WEIGHT_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_weights_simd.hex"
-`endif
+// V2001 호환 — 단일 big hex 파일 사용 (per-image 가 아닌 concatenated).
+// Hex 파일 위치 변경 시 아래 3 define 만 수정.
+`define CONV1_ALL_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_c1c2.hex"
+`define CONV2_ALL_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_c2pool.hex"
+`define WEIGHT_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_weights_simd.hex"
 
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -168,10 +167,12 @@ module tb_conv2_engine_multi;
     );
 
     //==========================================================================
-    // Pre-loaded image data
+    // Pre-loaded image data (1D flat for V2001 호환)
+    //   c1c2_data  [img_idx * 676 + (h*26 + w)]  = 64-bit
+    //   c2pool_data[img_idx * 576 + (h*24 + w)]  = 128-bit
     //==========================================================================
-    reg [63:0]  c1c2_data   [0:N_IMAGES-1][0:675];
-    reg [127:0] c2pool_data [0:N_IMAGES-1][0:575];
+    reg [63:0]  c1c2_data   [0:N_IMAGES*676-1];   // 67,600 entries
+    reg [127:0] c2pool_data [0:N_IMAGES*576-1];   // 57,600 entries
 
     //==========================================================================
     // Statistics
@@ -190,7 +191,7 @@ module tb_conv2_engine_multi;
     //
     //   bank = img_idx % 2
     //   addr = {bank, h[4:0], w[4:0]} = bank*1024 + h*32 + w
-    //   data = c1c2_data[img_idx][h*26+w]  (이미 packed 64-bit)
+    //   data = c1c2_data[img_idx*676 + h*26+w]  (이미 packed 64-bit, 1D flat)
     //==========================================================================
     task write_image;
         input integer img_idx;
@@ -204,7 +205,7 @@ module tb_conv2_engine_multi;
                     c1c2_ena_a   = 1'b1;
                     c1c2_wea_a   = 8'hFF;          // 모든 byte write
                     c1c2_addr_a  = (bank << 10) | (h << 5) | w;
-                    c1c2_din_a   = c1c2_data[img_idx][ent];
+                    c1c2_din_a   = c1c2_data[img_idx * 676 + ent];
                 end
             end
             @(negedge clk);
@@ -253,7 +254,7 @@ module tb_conv2_engine_multi;
                 // Collect data from previous addr (i-1), L=1 lag
                 if (i > 0) begin
                     got = c2pool_doutb_b;
-                    exp = c2pool_data[img_idx][i - 1];
+                    exp = c2pool_data[img_idx * 576 + (i - 1)];
                     if (got !== exp) begin
                         mm = mm + 1;
                         if (mm <= 3)  // 처음 3개만 상세 출력
@@ -289,16 +290,16 @@ module tb_conv2_engine_multi;
         $display("\n==========================================");
         $display("  Conv2 multi-image testbench (N=%0d)", N_IMAGES);
         $display("==========================================");
-        $display("  HEX_DIR    = %s", `HEX_DIR);
-        $display("  WEIGHT_HEX = %s", `WEIGHT_HEX);
+        $display("  CONV1_ALL_HEX = %s", `CONV1_ALL_HEX);
+        $display("  CONV2_ALL_HEX = %s", `CONV2_ALL_HEX);
+        $display("  WEIGHT_HEX    = %s", `WEIGHT_HEX);
         $display("");
 
-        // ---- 1. Load all image data
-        for (i = 0; i < N_IMAGES; i = i + 1) begin
-            $readmemh($sformatf("%s/img%03d_c1c2.hex",   `HEX_DIR, i), c1c2_data[i]);
-            $readmemh($sformatf("%s/img%03d_c2pool.hex", `HEX_DIR, i), c2pool_data[i]);
-        end
-        $display("[TB] Loaded %0d image hex pairs", N_IMAGES);
+        // ---- 1. Load all image data (single big hex per category)
+        $readmemh(`CONV1_ALL_HEX, c1c2_data);
+        $readmemh(`CONV2_ALL_HEX, c2pool_data);
+        $display("[TB] Loaded c1c2  (%0d entries) + c2pool (%0d entries)",
+                 N_IMAGES * 676, N_IMAGES * 576);
 
         // ---- 2. Load weight BMG (behavioral)
         $readmemh(`WEIGHT_HEX, dut.c2w_bmg_inst.mem);
