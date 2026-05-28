@@ -19,15 +19,18 @@ Conv1은 LeNet 계열 CNN의 첫 번째 합성곱 레이어를 FPGA에서 가속
 ## 2. 모듈 구성 한눈에 보기
 
 ```
-conv1_engine (최상위)
-├── conv1_fsm              ← 전체 타이밍/상태 제어
-├── conv1_weight_loader    ← 가중치 BRAM → PE 적재
-├── conv1_line_buffer ×2   ← 행 지연 FIFO (1행, 2행 지연)
-├── conv1_window_register  ← 3×3 슬라이딩 윈도우
-├── conv1_pe_cell ×18      ← DSP48E1 곱셈기 (9개씩 2그룹)
-├── conv1_adder_tree ×2    ← 9개 곱 합산
-└── conv1_truncate_relu    ← 우측 시프트 + ReLU + 포화
+conv1_engine (최상위, conv1_engine_2.v)
+├── conv1_fsm              ← 전체 타이밍/상태 제어 (Conv1 전용)
+├── conv1_weight_loader    ← 가중치 BRAM → PE 적재 (Conv1 전용, 36-entry)
+├── line_buffer ×2         ← 행 지연 FIFO (1행, 2행 지연)        [RTL/core/]
+├── window_register        ← 3×3 슬라이딩 윈도우                  [RTL/core/]
+├── pe_cell ×18            ← DSP48E1 곱셈기 (DEPTH=2, 9개씩 2그룹)  [RTL/core/]
+├── conv1_adder_tree ×2    ← 9개 곱 합산 (Conv1 전용 9:2 토폴로지)
+└── truncate_relu (N=4)    ← 우측 시프트 + ReLU + 포화             [RTL/core/]
 ```
+
+**공용 모듈** (`RTL/core/`): `line_buffer`, `window_register`, `pe_cell`, `truncate_relu` — Conv2 와 공유.
+**Conv1 전용** (`RTL/conv1/`): `conv1_engine_2`, `conv1_fsm`, `conv1_weight_loader`, `conv1_adder_tree`.
 
 ### 각 모듈 한 줄 요약
 
@@ -35,11 +38,13 @@ conv1_engine (최상위)
 |------|------|
 | `conv1_fsm` | IDLE→LOAD→RUN1→FLUSH1→LBRST→RUN2→FLUSH2→DONE 상태 전환, 모든 제어 신호 생성 |
 | `conv1_weight_loader` | 시작 신호를 받으면 weight BRAM에서 36개 가중치를 읽어 18개 PE에 분배 |
-| `conv1_line_buffer` | 깊이 27의 순환 FIFO — 1클럭 입력이 28사이클 뒤에 출력 (1행 지연) |
-| `conv1_window_register` | 3행×3열 레지스터 배열, 매 사이클 왼쪽으로 시프트하며 슬라이딩 윈도우 유지 |
-| `conv1_pe_cell` | DSP48E1 1개로 두 가중치(W0, W1)와 픽셀 X의 곱을 동시에 계산 (4사이클 레이턴시) |
-| `conv1_adder_tree` | 9개 PE 곱셈 결과를 1사이클에 모두 더해 채널별 부분합 생성 |
-| `conv1_truncate_relu` | 24-bit 합산 결과를 10비트 우측 시프트 → ReLU → 8-bit 포화 |
+| `line_buffer` (core) | 깊이 27의 순환 FIFO — 1클럭 입력이 28사이클 뒤에 출력 (1행 지연). active-high `rst` 로 round 전환 시 클리어. |
+| `window_register` (core) | 3행×3열 레지스터 배열, 매 사이클 왼쪽으로 시프트하며 슬라이딩 윈도우 유지. active-high `rst`. |
+| `pe_cell` (core) | DSP48E1 1개로 두 가중치(W0, W1)와 픽셀 X의 곱을 동시에 계산 (DEPTH=2, 4사이클 레이턴시). active-high `rst`. |
+| `conv1_adder_tree` | 9개 PE 곱셈 결과를 1사이클에 모두 더해 채널별 부분합 생성 (Conv1 전용 9:2 구조) |
+| `truncate_relu` (core) | 24-bit 합산 결과를 10비트 우측 시프트 → ReLU → 8-bit 포화. N=4 인스턴스. |
+
+> Conv1 의 `rst_n` (active-low) ↔ core 모듈의 `rst` (active-high) 변환은 `conv1_engine_2.v` 에서 처리.
 
 ---
 
@@ -264,13 +269,20 @@ sum (24-bit signed)
 
 ## 9. 파일 목록
 
+### Conv1 전용 (`RTL/conv1/`)
+
 | 파일 | 모듈 |
 |------|------|
 | `conv1_engine_2.v` | `conv1_engine` (최상위) |
 | `conv1_fsm.v` | `conv1_fsm` |
 | `conv1_weight_loader.v` | `conv1_weight_loader` |
-| `conv1_line_buffer.v` | `conv1_line_buffer` |
-| `conv1_window_register.v` | `conv1_window_register` |
-| `conv1_pe_cell.v` | `conv1_pe_cell` |
-| `conv1_adder_tree_1.v` | `conv1_adder_tree` |
-| `conv1_truncate_relu.v` | `conv1_truncate_relu` |
+| `conv1_adder_tree.v` | `conv1_adder_tree` |
+
+### 공용 모듈 (`RTL/core/`, Conv2 와 공유)
+
+| 파일 | 모듈 | Conv1 사용 |
+|------|------|------|
+| `line_buffer.v` | `line_buffer` | DEPTH=27, 2 인스턴스 |
+| `window_register.v` | `window_register` | 1 인스턴스 |
+| `pe_cell.v` | `pe_cell` | DEPTH=2, 18 인스턴스 |
+| `truncate_relu.v` | `truncate_relu` | N=4 |

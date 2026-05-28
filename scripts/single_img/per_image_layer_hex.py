@@ -49,10 +49,10 @@ import numpy as np
 # ---------------------------------------------------------------------------
 IMAGE_IDX = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 
-INPUT_FILE   = "../../../data/npy/input.npy"
-WEIGHT1_FILE = "../../../data/npy/layer1_0_weight.npy"
-WEIGHT2_FILE = "../../../data/npy/layer2_0_weight.npy"
-OUTPUT_DIR   = "../../../data/hex_layer_by_layer"
+INPUT_FILE   = "../../data/_base_npy/input.npy"
+WEIGHT1_FILE = "../../data/_base_npy/layer1_0_weight.npy"
+WEIGHT2_FILE = "../../data/_base_npy/layer2_0_weight.npy"
+OUTPUT_DIR   = "../../data/single_img"
 
 # ---------------------------------------------------------------------------
 # Conv 함수 (numpy 벡터화)

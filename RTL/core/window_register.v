@@ -38,6 +38,7 @@ module window_register #(
     parameter integer WIDTH = 8
 )(
     input  wire             clk,
+    input  wire             rst,         // active-high synchronous (Conv1 round 전환용)
     input  wire             en,          // pipe_en (state == RUN)
 
     // 3행 입력 (line_buffer 2개 + BRAM 직접)
@@ -63,8 +64,15 @@ module window_register #(
     reg signed [WIDTH-1:0] win_r1 [0:2]; // row1: lb1_out 흐름
     reg signed [WIDTH-1:0] win_r2 [0:2]; // row2: bram_out 흐름
 
+    integer i;
     always @(posedge clk) begin
-        if (en) begin
+        if (rst) begin
+            for (i = 0; i < 3; i = i + 1) begin
+                win_r0[i] <= {WIDTH{1'b0}};
+                win_r1[i] <= {WIDTH{1'b0}};
+                win_r2[i] <= {WIDTH{1'b0}};
+            end
+        end else if (en) begin
             // row0: lb2 출력 흐름 (가장 오래된 행)
             win_r0[0] <= win_r0[1];
             win_r0[1] <= win_r0[2];

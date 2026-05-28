@@ -37,10 +37,10 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # 경로 (스크립트 디렉토리에서 실행 가정)
 # ---------------------------------------------------------------------------
-INPUT_FILE   = "../../../data/npy/input.npy"
-WEIGHT1_FILE = "../../../data/npy/layer1_0_weight.npy"
-WEIGHT2_FILE = "../../../data/npy/layer2_0_weight.npy"
-OUTPUT_DIR   = "../../../data/multi_img"
+INPUT_FILE   = "../../data/_base_npy/input.npy"
+WEIGHT1_FILE = "../../data/_base_npy/layer1_0_weight.npy"
+WEIGHT2_FILE = "../../data/_base_npy/layer2_0_weight.npy"
+OUTPUT_DIR   = "../../data/multi_img"
 
 N_IMAGES = 100
 

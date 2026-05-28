@@ -33,16 +33,19 @@ Cycle/image: ~1,796 @ 180 MHz ≈ 10.0 μs
 
 ```
 conv2_engine.v  (top)
-├── conv2_fsm.v             — 제어 plane (8 state, counters)
-├── weight_loader.v         — BMG → 192 PE 적재 (시스템 시작 1회)
-├── conv2_weight_bram       — BMG IP (32-bit × 576)
-├── line_buffer × 16        — IC 8개 × 2 stage, DEPTH=25
-├── window_register × 8     — IC당 1개 (3×3 sliding window)
-├── pe_cell × 192           — DEPTH=3 (K_col weight 3개 보유)
-├── krow_ic_adder_tree × 16 — 24:1 합산, 5-stage pipeline
-├── kcol_accumulator × 16   — 3-cycle K_col 누적
-└── truncate_relu #(.N(16)) — >>10, saturate, ReLU
+├── conv2_fsm.v             — 제어 plane (8 state, counters)             [conv2/]
+├── weight_loader.v         — BMG → 192 PE 적재 (시스템 시작 1회)         [conv2/]
+├── conv2_weight_bram       — BMG IP (32-bit × 576)                       [Vivado IP]
+├── line_buffer × 16        — IC 8개 × 2 stage, DEPTH=25                   [core/]
+├── window_register × 8     — IC당 1개 (3×3 sliding window)                [core/]
+├── pe_cell × 192           — DEPTH=3 (K_col weight 3개 보유)              [core/]
+├── krow_ic_adder_tree × 16 — 24:1 합산, 5-stage pipeline                  [conv2/]
+├── kcol_accumulator × 16   — 3-cycle K_col 누적                           [conv2/]
+└── truncate_relu #(.N(16)) — >>10, saturate, ReLU                         [core/]
 ```
+
+**공용 모듈** (`RTL/core/`): `line_buffer`, `window_register`, `pe_cell`, `truncate_relu` — Conv1 과 공유 (Conv1 은 DEPTH=27, 1 inst, DEPTH=2, N=4 로 사용).
+**Conv2 전용** (`RTL/conv2/`): top + FSM + weight_loader + Conv2-specific adder_tree/kcol_accumulator.
 
 추가로 conv2_engine 내부에:
 - **col_sel mux × 24** (3 K_row × 8 IC): window 의 9 cell 중 col_sel 에 따라 3-cell 선택 → PE x 입력

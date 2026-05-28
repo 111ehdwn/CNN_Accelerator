@@ -1,507 +1,411 @@
-# CNN Accelerator 프로젝트 협업 가이드
+# CNN Accelerator — 팀 협업 / Convention 가이드
 
-> Git, GitHub, VSCode를 처음 다루는 사람도 따라할 수 있도록 작성된 가이드입니다.
-> Python 환경 세팅부터 Merge Request까지 전체 과정을 다룹니다.
+> 본 문서는 **팀원이 일관된 convention 으로 작업할 수 있도록** 정리한 reference manual 입니다.
+> Onboarding 보다는 "내가 작업할 layer 의 hex 포맷이 정확히 뭐였지?" 같은 **빠른 참조**를 목적으로 합니다.
+>
+> 대상: 김도현 (Conv2), 김동주 (Maxpool), 신지민 (Conv1).
+> 관련 상위 문서: `docs/project_overview.md` (시스템 구조), `docs/DSP48E1_signed8x8_SIMD_Packing.md` (SIMD 수식 derivation).
 
 ---
 
 ## 목차
 
-1. [필수 프로그램 설치](#1-필수-프로그램-설치)
-2. [Git 초기 설정](#2-git-초기-설정)
-3. [VSCode 플러그인 설치](#3-vscode-플러그인-설치)
-4. [Python 환경 세팅](#4-python-환경-세팅)
-5. [GitHub Repository 가져오기 (Clone)](#5-github-repository-가져오기-clone)
-6. [본인 브랜치 만들고 작업하기](#6-본인-브랜치-만들고-작업하기)
-7. [Add, Commit, Push 하기](#7-add-commit-push-하기)
-8. [Pull Request (Merge Request) 보내기](#8-pull-request-merge-request-보내기)
-9. [자주 발생하는 문제와 해결법](#9-자주-발생하는-문제와-해결법)
-10. [핵심 명령어 요약](#10-핵심-명령어-요약)
+1. [프로젝트 디렉토리 구조](#1-프로젝트-디렉토리-구조)
+2. [Hex 파일 포맷 (가장 중요)](#2-hex-파일-포맷-가장-중요)
+3. [Weight packing 포맷](#3-weight-packing-포맷)
+4. [Script 사용법 (시나리오별)](#4-script-사용법-시나리오별)
+5. [RTL 모듈 책임 분담](#5-rtl-모듈-책임-분담)
+6. [Testbench 사용법](#6-testbench-사용법)
+7. [Pitfall / 주의사항](#7-pitfall--주의사항)
+8. [최근 fix 이력](#8-최근-fix-이력)
+9. [부록: Git 협업 흐름](#9-부록-git-협업-흐름)
 
 ---
 
-## 1. 필수 프로그램 설치
+## 1. 프로젝트 디렉토리 구조
 
-작업을 시작하기 전에 아래 3가지 프로그램이 컴퓨터에 설치되어 있어야 합니다.
-
-### 1.1 Git 설치
-
-Git은 코드 버전 관리 도구입니다.
-
-- **Windows**: <https://git-scm.com/download/win> 접속 → 자동으로 다운로드 시작 → 설치 마법사에서 모두 **Next** 클릭 (기본 설정 권장)
-- **macOS**: 터미널을 열고 `git --version` 입력 → 설치 안내 창이 뜨면 **Install** 클릭
-- **Linux (Ubuntu)**: 터미널에서 다음 명령어 실행
-
-```bash
-sudo apt update
-sudo apt install git
+```
+CNN_Accelerator/
+├── data/                       ← 모든 .npy / .hex 데이터 (gitignore 대상 아님, 작아서 commit OK)
+│   ├── _base_npy/              ← 원본 .npy (변경 금지, 모든 hex 의 source)
+│   │   ├── input.npy           (10000, 1, 28, 28)  int8   ← MNIST 10,000 image
+│   │   ├── layer1_0_weight.npy (8, 1, 3, 3)        int8   ← Conv1 weight
+│   │   ├── layer2_0_weight.npy (16, 8, 3, 3)       int8   ← Conv2 weight
+│   │   ├── fc1_weight.npy      (10, 2304)          int8   ← FC weight
+│   │   └── output.npy          (10000, 10)         int8   ← Python reference output
+│   │
+│   ├── weights_simd/           ← SIMD packed weight (testbench 가 $readmemh 로 직접 load)
+│   │   ├── conv1_weights_simd.{hex,h}    ← Conv1
+│   │   ├── conv2_weights_simd.{hex,h}    ← Conv2
+│   │   └── fc_weights_simd.{hex,h}       ← FC
+│   │
+│   ├── single_img/             ← image 0 (또는 IDX 지정) 의 layer 별 hex
+│   │   ├── conv1_input.hex             (Conv1 입력)
+│   │   ├── conv1_output_c1c2.hex       (Conv1 출력 = Conv2 입력)
+│   │   ├── conv2_output_c2pool.hex     (Conv2 출력 = Maxpool 입력)
+│   │   ├── maxpool_output.hex          (Maxpool 출력 = FC 입력)
+│   │   └── fc_output.hex               (FC 출력 = 최종 10-class)
+│   │
+│   └── multi_img/              ← 100 image stress test 용 (img000_*.hex .. img099_*.hex)
+│       ├── img000_c1c2.hex     ~ img099_c1c2.hex     (per image, 1024 × 64-bit)
+│       ├── img000_c2pool.hex   ~ img099_c2pool.hex   (per image, 576  × 128-bit)
+│       ├── all_c1c2.hex        (concatenated 100 × 1024  = 102,400 lines)
+│       └── all_c2pool.hex      (concatenated 100 × 576   =  57,600 lines)
+│
+├── scripts/                    ← Python data 생성 / golden simulation
+│   ├── weights/                ← weight packing (drink-and-forget, weight 바뀌면 재실행)
+│   │   ├── conv1_simd_pack.py
+│   │   └── conv2_simd_pack.py
+│   ├── single_img/             ← per-image layer hex (각 RTL 모듈 검증용)
+│   │   ├── per_image_layer_hex.py      (Conv1 input, c1c2, c2pool)
+│   │   ├── maxpool_out.py              (Maxpool 출력)
+│   │   └── fc_out.py                   (FC 출력 + predicted class)
+│   ├── multi_img/              ← 100 image 배치 생성
+│   │   └── gen_multi_img_hex.py
+│   └── golden_sim/             ← Python reference (Conv 알고리즘 검증)
+│       ├── 0_reference.py
+│       └── reference_core.py
+│
+├── RTL/
+│   ├── conv1/                  ← 신지민 — conv1_engine_2.v (top), _2 suffix 주의
+│   ├── conv2/                  ← 김도현 — conv2_engine.v (top)
+│   ├── maxpool/                ← 김동주 — maxpool_engine.v (top)
+│   ├── fc/                     ← FC layer (담당 TBD)
+│   ├── ping_pong_buffer/       ← (legacy / 설계 문서 보관용, 실제 코드 없음)
+│   ├── rtl_pingpong/           ← 실제 ping-pong buffer 구현
+│   │   └── c2pool_pingpong_buffer.v
+│   ├── cnn_accelerator.v       ← top integration (현재 skeleton 만 존재)
+│   └── axi_csr_inner.v         ← AXI CSR slave
+│
+├── TB/
+│   ├── single_img/             ← per-engine 단위 검증
+│   │   ├── tb_conv1_engine.v
+│   │   ├── tb_conv2_engine.v
+│   │   └── tb_maxpool_engine.v
+│   └── multi_img/              ← 100 image stress
+│       └── tb_conv2_engine_multi.v
+│
+├── docs/                       ← 본 가이드 위치
+│   ├── cowork_guide.md         ← 이 파일
+│   ├── project_overview.md
+│   └── DSP48E1_signed8x8_SIMD_Packing.md
+│
+└── archive/                    ← 과거 버전 보관 (참고만, 사용 X)
 ```
 
-설치 확인:
-
-```bash
-git --version
-```
-
-`git version 2.xx.x`처럼 버전이 나오면 성공입니다.
-
-### 1.2 VSCode 설치
-
-VSCode는 코드 편집기입니다.
-
-- 다운로드: <https://code.visualstudio.com/>
-- 본인 운영체제에 맞는 버전 다운로드 후 설치 (기본 설정으로 **Next** 진행)
-
-### 1.3 Python 설치
-
-- 다운로드: <https://www.python.org/downloads/>
-- **중요**: Windows 설치 시 첫 화면에서 **"Add Python to PATH"** 체크박스를 반드시 체크하세요.
-
-설치 확인:
-
-```bash
-python --version
-```
-
-또는 (시스템에 따라):
-
-```bash
-python3 --version
-```
-
-`Python 3.x.x`가 나오면 성공입니다.
+> 모든 script 는 **자기 디렉토리에서 실행**한다고 가정 (상대경로 `../../data/...`). cwd 가 다르면 path resolve 실패.
 
 ---
 
-## 2. Git 초기 설정
+## 2. Hex 파일 포맷 (가장 중요)
 
-처음 한 번만 하면 됩니다. 본인의 이름과 이메일을 등록하는 과정입니다.
-이 정보는 commit 기록에 남기 때문에 **GitHub 계정과 동일한 이메일**을 사용하는 것이 좋습니다.
+각 layer 의 BRAM 포맷을 정확히 맞춰야 testbench 가 `$readmemh` 한 줄로 init 가능. **단 한 byte 라도 어긋나면 simulation 결과가 망가집니다.**
 
-터미널(Windows는 PowerShell, 또는 VSCode 내부 터미널)을 열고 다음을 입력합니다.
+### 2.1 한눈에 보기
 
-```bash
-git config --global user.name "본인이름"
-git config --global user.email "본인이메일@example.com"
-```
+| 파일 | 라인 수 | bit/line | hex chars/line | addressing | packing |
+|---|---|---|---|---|---|
+| `conv1_input.hex`         |  784 |   8 |  2 | compact `h*28 + w`                    | raw 1 byte/pixel |
+| `conv1_output_c1c2.hex`   | 1024 |  64 | 16 | **padded** `h*32 + w` (h,w ∈ [0,25]) | 8 IC × 8b, IC 0 = LSB |
+| `conv2_output_c2pool.hex` |  576 | 128 | 32 | compact `h*24 + w` (write_addr 순)   | 16 OC × 8b, OC 0 = LSB |
+| `maxpool_output.hex`      | 2304 |   8 |  2 | flatten `(c, h, w)` C-order           | raw 1 byte/pixel |
+| `fc_output.hex`           |   10 |   8 |  2 | 10 class score                        | raw 1 byte/class |
 
-확인:
+→ 생성 script: `scripts/single_img/per_image_layer_hex.py` (1, 2, 3 번), `maxpool_out.py` (4 번), `fc_out.py` (5 번).
 
-```bash
-git config --global --list
-```
+### 2.2 `conv1_input.hex` — Conv1 입력
 
-### 2.1 GitHub 계정 만들기
+- **사용처**: `conv1_engine.in_bram_addr[9:0]` / `in_bram_dout[7:0]` (1 채널 MNIST raw)
+- **shape**: (1, 28, 28) int8 → 784 lines
+- **address**: `addr = h*28 + w` (compact, no padding)
+- **포맷**: 1 byte / line, `%02X` (예: `7F`, `00`)
 
-- <https://github.com/> 접속 → **Sign up** 클릭 → 계정 생성
-- 이미 계정이 있다면 로그인만 하면 됩니다.
+### 2.3 `conv1_output_c1c2.hex` — Conv1 출력 = Conv2 입력 (c1c2 buffer)
 
-### 2.2 GitHub 인증 설정 (Personal Access Token)
+- **사용처**: `conv2_engine.c1c2_addr[10:0]` / `c1c2_dout[63:0]`
+- **address layout**: `{bank_sel, row[4:0], col[4:0]}` = `bank * 1024 + h*32 + w`
+- **valid range**: `h ∈ [0, 25]`, `w ∈ [0, 25]` (Conv1 output 26×26)
+- **padding**: `h ∈ [26, 31]` 또는 `w ∈ [26, 31]` → `0000000000000000` (8 byte zero)
+- **packing**: 8 IC × 8b
+  ```
+  word[63:0] = {IC7, IC6, IC5, IC4, IC3, IC2, IC1, IC0}   (IC 0 = LSB, bits[7:0])
+  ```
+- 1 bank = 1 image = 1024 entry. BMG depth 2048 = 2 bank × 1024 (ping-pong).
+- **single_img TB 도 multi_img TB 도 같은 hex 파일을 그대로 사용 가능** (padded format 통일).
 
-요즘 GitHub는 비밀번호 대신 **Personal Access Token (PAT)** 으로 인증합니다.
+### 2.4 `conv2_output_c2pool.hex` — Conv2 출력 (c2pool buffer)
 
-1. GitHub 로그인 → 우측 상단 프로필 → **Settings**
-2. 좌측 메뉴 맨 아래 **Developer settings** 클릭
-3. **Personal access tokens** → **Tokens (classic)** 클릭
-4. **Generate new token (classic)** 클릭
-5. 항목 입력:
-   - **Note**: `CNN_Accelerator` (이름 아무거나)
-   - **Expiration**: 90 days 또는 No expiration
-   - **Select scopes**: `repo` 항목 전체 체크
-6. 맨 아래 **Generate token** 클릭
-7. **생성된 토큰을 반드시 복사해서 메모장에 저장**하세요. 한 번만 보입니다!
+- **사용처**: `conv2_engine.c2pool_addr[10:0]` / `c2pool_din[127:0]`
+- **address layout**: `{bank_sel, write_addr[9:0]}` = `bank * 1024 + (h*24 + w)`
+- **address 는 compact** (no padding), `write_addr = 0..575` sequential
+- **packing**: 16 OC × 8b
+  ```
+  word[127:0] = {OC15, OC14, ..., OC1, OC0}   (OC 0 = LSB, bits[7:0])
+  ```
+- 1 bank = 576 entry 사용 (BMG depth 2048 = 2 bank × 1024 중 0..575, 1024..1599).
 
-> 나중에 push할 때 비밀번호를 물어보면 이 토큰을 붙여넣으면 됩니다.
+### 2.5 `maxpool_output.hex` — Maxpool 출력 = FC 입력
+
+- shape (16, 12, 12) int8 → **2304 entries**, C-order flatten (`np.tobytes()`)
+- 1 byte / line.
+- (현재 RTL/fc/maxpool_output.hex 가 별도로 존재 — 같은 source 인지 확인 필요.)
+
+### 2.6 `fc_output.hex` — 최종 출력
+
+- 10 class score (int8, post-saturation), `argmax` = predicted class.
+- 1 byte / line.
+
+→ 관련 파일:
+- 생성: `scripts/single_img/per_image_layer_hex.py`, `scripts/multi_img/gen_multi_img_hex.py`
+- 사용: `TB/single_img/tb_conv2_engine.v` (line 26-28), `TB/multi_img/tb_conv2_engine_multi.v` (line 25-27)
 
 ---
 
-## 3. VSCode 플러그인 설치
+## 3. Weight packing 포맷
 
-VSCode를 실행하고 좌측 사이드바의 **Extensions** 아이콘(네모 4개 모양)을 클릭하거나 단축키 `Ctrl + Shift + X` (Mac: `Cmd + Shift + X`)를 누릅니다.
+모든 conv weight 는 **DSP48E1 SIMD packing** (1 곱셈으로 2 OC 동시 계산) 을 사용합니다. 수식 derivation 은 `docs/DSP48E1_signed8x8_SIMD_Packing.md` 참조.
 
-검색창에 아래 이름을 하나씩 입력하고 **Install** 버튼을 눌러 설치합니다.
+**공통 packing 식** (Conv1, Conv2 동일):
+```
+packed_25bit = W1 * 2^17 + W0          (W0, W1 ∈ [-127, 127], 25-bit 2's complement)
+BRAM word    = zero_extend(packed_25bit, 32)   (상위 7 bit = 0)
+```
 
-| 플러그인 이름 | 설명 | 검색어 |
+> ⚠️ **W0, W1 = -128 동시 사용 금지** (carry 보정이 깨짐). `conv*_simd_pack.py` 가 `ovf_count` 로 검증.
+
+### 3.1 Conv1 weight (`conv1_weights_simd.hex`)
+
+- **shape**: 36 lines × 32-bit
+- **구조**: 18 PE = 2 group (g1, g2) × 9 PE, 각 PE 가 DEPTH=2 weight register (round 1/2)
+  - 1 group 9 PE = 3 KH × 3 KW, PE idx `i → (kh, kw) = (i/3, i%3)`
+  - 1 PE = 2 OC SIMD pack (W0, W1)
+
+| addr   | group | sel (round) | OC pairing (W0, W1) |
+|:------:|:-----:|:-----------:|:--------------------|
+|  0.. 8 | g1    | 0           | (oc0, oc1)          |
+|  9..17 | g2    | 0           | (oc2, oc3)          |
+| 18..26 | g1    | 1           | (oc4, oc5)          |
+| 27..35 | g2    | 1           | (oc6, oc7)          |
+
+공식: `oc_w0 = sel*4 + (group-1)*2`, `oc_w1 = oc_w0 + 1`.
+
+→ 관련 파일: `scripts/weights/conv1_simd_pack.py`, `RTL/conv1/conv1_weight_loader.v`, `RTL/conv1/conv1_design.md`
+
+### 3.2 Conv2 weight (`conv2_weights_simd.hex`)
+
+- **shape**: 576 lines × 32-bit (8 pair × 8 IC × 3 KH × 3 KW)
+- **OC pairing**: `W0 = W[k, ic, kh, kw]`, `W1 = W[k+8, ic, kh, kw]`, `k = 0..7`
+- **iteration order**: `(pair, ic, kh, kw)` outer-to-inner (즉, 연속된 9 entry = 한 (pair, ic) 의 3×3 kernel)
+- **addr**: `pair*72 + ic*9 + kh*3 + kw` (= 0..575)
+
+→ 관련 파일: `scripts/weights/conv2_simd_pack.py`, `RTL/conv2/weight_loader.v`, `RTL/conv2/conv2_design.md`
+
+### 3.3 Verification
+
+두 packing script 모두 **exhaustive verify** 포함 (`254 × 254 × 256 ≈ 16.5 M case`). 실행 시 자동으로 통과 확인.
+
+---
+
+## 4. Script 사용법 (시나리오별)
+
+> 모든 script 는 **자기 디렉토리에서 `python3 *.py` 로 실행**. 다른 디렉토리에서 실행하면 `../../data/...` 상대경로가 깨짐.
+
+### 4.1 "weight `.npy` 가 바뀌었어요" (재학습 등)
+
+```bash
+cd scripts/weights
+python3 conv1_simd_pack.py
+python3 conv2_simd_pack.py
+```
+
+→ `data/weights_simd/conv1_weights_simd.{hex,h}`, `conv2_weights_simd.{hex,h}` 갱신.
+→ packed hex 가 바뀌었으므로 모든 testbench 재실행 필요.
+
+### 4.2 "다른 image 로 single_img test 하고 싶어요"
+
+```bash
+cd scripts/single_img
+python3 per_image_layer_hex.py 28     # image index 28
+python3 per_image_layer_hex.py        # default: image 0
+```
+
+→ `data/single_img/conv1_input.hex`, `conv1_output_c1c2.hex`, `conv2_output_c2pool.hex` 갱신.
+→ Maxpool / FC golden 도 필요하면 `maxpool_out.py`, `fc_out.py` 실행 (현재는 IMAGE_IDX 가 hard-coded = 0, 필요시 수정).
+
+### 4.3 "multi_img 데이터 새로 만들 거예요"
+
+```bash
+cd scripts/multi_img
+python3 gen_multi_img_hex.py
+```
+
+→ `data/multi_img/img000_*.hex` .. `img099_*.hex` (총 200 file) + `all_c1c2.hex` + `all_c2pool.hex` 갱신.
+→ 약 5-10 초 소요.
+
+### 4.4 "Conv weight packing 식이 맞는지 확인하고 싶어요"
+
+→ `scripts/weights/conv1_simd_pack.py` (또는 `conv2_simd_pack.py`) 실행. 끝 부분 `[Verify] PASS — ...` 출력 확인.
+
+---
+
+## 5. RTL 모듈 책임 분담
+
+| 디렉토리 | 담당자 | Top module | Key files |
+|---|---|---|---|
+| `RTL/conv1/`  | **신지민** | `conv1_engine_2.v` | `conv1_fsm.v`, `conv1_weight_loader.v`, `conv1_pe_cell.v`, `conv1_design.md` |
+| `RTL/conv2/`  | **김도현** | `conv2_engine.v`   | `conv2_fsm.v`, `weight_loader.v`, `pe_cell.v`, `krow_ic_adder_tree.v`, `conv2_design.md`, `conv2_timing.md` |
+| `RTL/maxpool/`| **김동주** | `maxpool_engine.v` | `maxpool_fsm.v`, `max_compare_tree.v` |
+| `RTL/fc/`     | TBD       | `fc_engine.v`      | `fc_fsm.v`, `pe_array_fc.v`, `accumulator.v`, `argmax.v` |
+| 통합          | (전원)    | `cnn_accelerator.v` | + `RTL/rtl_pingpong/c2pool_pingpong_buffer.v` |
+
+> Conv1 의 top file 이름이 `conv1_engine_2.v` 인 이유: 신지민이 v1 → v2 로 refactor 한 후 `_2` suffix 를 그대로 둠. 인스턴스 module name 은 `conv1_engine` 으로 동일.
+
+### 5.1 Module 간 interface (요약)
+
+```
+              [c1c2 buffer]                  [c2pool buffer]                  [pool buffer]
+              64-bit × 2048                 128-bit × 2048                   8-bit × 4608
+                    │                              │                              │
+                    ▼                              ▼                              ▼
+  Conv1 ─wdone→  c1c2  ─rdone→  Conv2  ─wdone→  c2pool  ─rdone→  Maxpool  ─wdone→  pool  ─→  FC
+        ←rdone─       ←wdone─         ←rdone─         ←wdone─           ←rdone─
+```
+
+Handshake: 각 engine 은 `prior_wdone` (입력 데이터 준비됨) / `succ_rdone` (출력 buffer 비었음) 을 받고, `rdone` (입력 다 읽음) / `wdone` (출력 다 씀) 을 발행. **1-cycle pulse**.
+
+---
+
+## 6. Testbench 사용법
+
+### 6.1 단위 검증 (single image)
+
+| TB | DUT | 입력 hex | Expected hex | 비고 |
+|---|---|---|---|---|
+| `TB/single_img/tb_conv1_engine.v`   | `conv1_engine`   | `conv1_weight.mem` + `input_image.mem` | (script 가 비교) | 출력 → `conv1_out.hex` 저장 |
+| `TB/single_img/tb_conv2_engine.v`   | `conv2_engine`   | `conv1_output_c1c2.hex` + `conv2_weights_simd.hex` | `conv2_output_c2pool.hex` | bit-exact 비교 |
+| `TB/single_img/tb_maxpool_engine.v` | `maxpool_engine` | `conv2_out.hex` + `python_maxpool_ref.hex` | (내장 비교) | 출력 → `maxpool_out.hex` |
+
+### 6.2 Stress test (multi image)
+
+| TB | DUT | 입력 hex | Expected hex | 비고 |
+|---|---|---|---|---|
+| `TB/multi_img/tb_conv2_engine_multi.v` | `conv2_engine` | `all_c1c2.hex` (102,400 line) + `conv2_weights_simd.hex` | `all_c2pool.hex` (57,600 line) | 100 image 연속 검증 |
+
+### 6.3 실행 방법 (Vivado XSIM)
+
+```
+Vivado → Open Project → 본 repo 의 .xpr (없으면 Create Project → Add Sources → RTL/* + TB/*)
+→ Run Simulation → Run Behavioral Simulation
+```
+
+> **DSP48E1 primitive** 사용 → Xilinx `unisim` library 필수. iverilog/verilator 는 stub 필요.
+
+### 6.4 hex file path (TODO: 통일 필요)
+
+현재 모든 TB 가 **Windows 절대경로 hard-coded**:
+```verilog
+`define CONV1_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/.../conv1_output_c1c2.hex"
+```
+→ 본인 경로로 수정 또는 (TODO) `data/single_img/...` 상대경로로 통일.
+
+---
+
+## 7. Pitfall / 주의사항
+
+### 7.1 Reset polarity — Conv1 vs Conv2 다름!
+
+| Module | Reset signal | Polarity |
 |---|---|---|
-| Markdown All in One | 마크다운 문서를 보기 좋게 렌더링/편집 | `Markdown All in One` |
-| GitLens | 누가, 언제, 왜 코드를 작성했는지 표시 | `GitLens` |
-| Verilog Formatter | Verilog 코드 자동 정렬 (Vivado보다 우수) | `Verilog Formatter` |
-| SystemVerilog | SystemVerilog 문법 지원 | `SystemVerilog` |
-| Python | Python 개발 필수 (Microsoft 공식) | `Python` |
+| `conv1_engine` | `rst_n` | **active low** |
+| `conv2_engine` | `rst`   | **active high** |
+| `maxpool_engine` | `rst` | **active high** |
+| `fc_engine` | `rst`     | **active high** |
 
-> **팁**: 각 플러그인 설치 후 VSCode를 재시작하면 더 안정적으로 작동합니다.
+→ `cnn_accelerator.v` 에서 통합할 때 **inverter 추가 필요** (`conv1.rst_n = ~reset` 또는 `~resetn`). 현재 top file 에 `wire reset = ~resetn;` 만 있음.
 
----
+### 7.2 BMG IP 설정 — Conv2 의 weight, c1c2, c2pool 이 모두 다름
 
-## 4. Python 환경 세팅
+| BMG | Depth | Width | Primitive Output Register | Latency (L) | Byte Write |
+|---|---|---|---|---|---|
+| `conv2_weight_bram` | 1024 (576 entry 사용) |  32 | **Enable** (Port B) | 2 | Disable |
+| `c1c2 buffer`       | 2048 (2 bank × 1024)   |  64 | **Enable** (Port B) | 2 | Disable |
+| `c2pool buffer`     | 2048 (2 bank × 1024)   | 128 | **Disable**         | 1 | Disable |
 
-Python 프로젝트는 가상환경(virtual environment)을 사용하는 것이 좋습니다.
-가상환경은 프로젝트마다 독립된 패키지 공간을 만들어줍니다.
+→ Vivado IP catalog 에서 BMG 생성 시 위 설정대로. **`L` 이 틀리면 pipeline timing 어긋남** → conv2_engine.v 의 9-cycle delay pipeline 이 정확히 L=2 를 가정하고 설계됨.
 
-### 4.1 가상환경 만들기
+### 7.3 데이터 stride — padded vs compact
 
-작업할 폴더를 정한 뒤 (예: `D:\projects` 또는 `~/projects`), 터미널에서 해당 폴더로 이동합니다.
+| Buffer | Stride | Padding | Address 공식 |
+|---|---|---|---|
+| `c1c2`   | 32 (padded) | h ∈ [26,31] or w ∈ [26,31] → 0 | `bank*1024 + h*32 + w` |
+| `c2pool` | 24 (compact) | 없음 (write_addr sequential) | `bank*1024 + h*24 + w` |
 
-```bash
-# 폴더 이동
-cd D:\projects        # Windows
-cd ~/projects         # macOS/Linux
+→ Conv2 입력 BRAM 의 valid `(h, w)` 는 0..25 이지만 stride 가 32 임에 주의. **hex line index = `h*32 + w`** (NOT `h*26 + w`).
 
-# 가상환경 생성 (venv라는 이름의 가상환경 생성)
-python -m venv venv
-```
+### 7.4 SIMD overflow (W1 = -128, W0 < 0)
 
-### 4.2 가상환경 활성화
+DSP48E1 의 carry 보정이 깨지는 corner case. `conv*_simd_pack.py` 실행 시 `ovf_count` 출력 → **0 이어야 안전**. 학습된 weight 의 range 는 ±127 로 clip 되어 있어 보통 0.
 
-```bash
-# Windows (PowerShell)
-.\venv\Scripts\Activate.ps1
+### 7.5 Weight loader 는 시스템 부팅 시 1회만 동작
 
-# Windows (CMD)
-venv\Scripts\activate.bat
-
-# macOS / Linux
-source venv/bin/activate
-```
-
-활성화되면 터미널 앞에 `(venv)`가 표시됩니다.
-
-> **PowerShell에서 실행 오류가 난다면** 관리자 권한 PowerShell에서 한 번만 실행:
-> ```powershell
-> Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-> ```
-
-### 4.3 필요한 패키지 설치
-
-프로젝트에 `requirements.txt`가 있다면:
-
-```bash
-pip install -r requirements.txt
-```
-
-없다면 필요한 패키지를 하나씩 설치합니다. 예시:
-
-```bash
-pip install numpy torch matplotlib
-```
-
-### 4.4 VSCode에서 가상환경 선택
-
-1. VSCode에서 Python 파일(`.py`)을 엽니다.
-2. 우측 하단 또는 `Ctrl + Shift + P` → **Python: Select Interpreter** 입력
-3. 방금 만든 `venv` 안의 Python을 선택합니다.
+`conv2_engine.v` 의 `weight_loader` 는 LOAD_WEIGHTS state 에서 BMG → 192 PE 로 weight 적재 후 종료. **Inference 중에는 weight 가 PE register 에 상주**. weight 가 바뀌면 `start` pulse 로 재로드.
 
 ---
 
-## 5. GitHub Repository 가져오기 (Clone)
+## 8. 최근 fix 이력
 
-이제 GitHub에 있는 코드를 내 컴퓨터로 가져옵니다.
+| 날짜 | 영역 | 내용 | 자세한 분석 |
+|---|---|---|---|
+| 2026-05-28 | Conv2 | **Adder drain bug** — image 28 의 마지막 2 pixel (addr 574, 575) 만 fail. `adder_en` 이 1-cycle 만 high → 5-stage adder pipeline 끝까지 마지막 PE 출력이 도달 못 함. **fix**: `adder_en` 을 5-cycle window OR 로 수정. | `RTL/conv2/conv2_adder_drain_bug_fix.md` |
+| 2026-05-28 | Conv2 weight loader | BRAM read 메커니즘 수정 (BMG L=2 latency 고려) | `commit de35763` |
+| 2026-05-23 | Conv2 | SystemVerilog 문법 → Verilog 변환, FSM BRAM latency 반영 | `commit 951f358` |
+| 2026-05-?? | Conv2 | SIMD add (DSP48E1 패킹 정식 적용) | `commit 2f4e5c1` |
 
-### 5.1 작업 폴더 정하기
-
-먼저 어느 폴더에 프로젝트를 받을지 정합니다. 예시:
-
-```bash
-cd D:\projects        # Windows
-cd ~/projects         # macOS/Linux
-```
-
-### 5.2 Clone 명령 실행
-
-```bash
-git clone https://github.com/dohyunKim0309/CNN_Accelerator.git
-```
-
-실행하면 `CNN_Accelerator`라는 폴더가 생성되고 그 안에 모든 파일이 다운로드됩니다.
-
-### 5.3 폴더로 이동
-
-```bash
-cd CNN_Accelerator
-```
-
-### 5.4 VSCode에서 열기
-
-```bash
-code .
-```
-
-이 명령으로 현재 폴더가 VSCode에서 열립니다. (`code` 명령이 안 되면 VSCode를 직접 실행하고 **File → Open Folder**로 폴더 선택)
+→ 새 bug fix 발견 시 본 표에 1 줄 추가 + 분석 문서는 해당 RTL/<module>/ 디렉토리에 `<module>_<bug>_fix.md` 형식으로 작성.
 
 ---
 
-## 6. 본인 브랜치 만들고 작업하기
+## 9. 부록: Git 협업 흐름
 
-### 브랜치(branch)란?
+> 기본 git/PR workflow 는 본 가이드의 이전 버전 (commit history 참조) 에서 별도로 다뤘습니다. 본 섹션은 **본 프로젝트 특유의 git 규약** 만 다룹니다.
 
-브랜치는 **나만의 작업 공간**입니다. 메인 코드(main 브랜치)를 건드리지 않고 따로 떨어진 공간에서 작업한 뒤, 나중에 합치는 방식입니다. 여러 명이 동시에 작업해도 충돌이 적게 일어납니다.
+### 9.1 브랜치 전략
 
-### 6.1 현재 브랜치 확인
+- **main**: 항상 동작하는 상태 유지. 직접 push 금지.
+- **feature/<이름>-<모듈>** : 본인 작업 브랜치. 예: `feature/dohyun-conv2`, `feature/jimin-conv1`.
+- **fix/<짧은 설명>** : bug fix 용. 예: `fix/conv2-adder-drain`.
 
-```bash
-git branch
-```
-
-`* main`이 보일 것입니다. (`*` 표시가 현재 위치한 브랜치)
-
-### 6.2 최신 코드 가져오기 (작업 시작 전 항상!)
-
-```bash
-git pull origin main
-```
-
-### 6.3 새 브랜치 만들고 이동하기
-
-브랜치 이름은 **자기 이름이나 작업 내용**으로 짓는 것이 좋습니다.
-
-```bash
-git checkout -b feature/본인이름
-```
-
-예시:
-
-```bash
-git checkout -b feature/dohyun
-git checkout -b fix/conv-layer-bug
-git checkout -b dev/jiwoo
-```
-
-이제 본인만의 브랜치에서 작업을 시작할 수 있습니다.
-
-브랜치 확인:
-
-```bash
-git branch
-```
-
-`* feature/본인이름`처럼 새 브랜치에 `*` 표시가 있으면 성공입니다.
-
----
-
-## 7. Add, Commit, Push 하기
-
-코드 작업이 끝났다면 GitHub에 업로드해야 합니다. 3단계로 이루어집니다.
+### 9.2 Commit message convention
 
 ```
-[수정한 파일] --add--> [Staging Area] --commit--> [Local Repository] --push--> [GitHub]
+<scope>: <한 줄 요약>
+
+(선택) 자세한 본문
 ```
 
-### 7.1 변경사항 확인
-
-```bash
-git status
-```
-
-- **빨간색 파일**: 아직 add 안 된 변경 파일
-- **초록색 파일**: add 완료된 파일
-
-### 7.2 Add (스테이징)
-
-수정한 파일을 commit 대상으로 등록합니다.
-
-```bash
-# 특정 파일만 add
-git add filename.py
-
-# 모든 변경 파일 add
-git add .
-```
-
-### 7.3 Commit (확정)
-
-변경사항을 메시지와 함께 저장합니다.
-
-```bash
-git commit -m "작업 내용 설명"
-```
-
-좋은 commit 메시지 예시:
-
-```bash
-git commit -m "Add convolution layer module"
-git commit -m "Fix pooling stride calculation bug"
-git commit -m "Update README with installation guide"
-```
-
-> **팁**: commit 메시지는 무엇을 했는지 짧고 명확하게 작성하세요.
-
-### 7.4 Push (업로드)
-
-처음 push할 때는 브랜치 이름을 명시합니다.
-
-```bash
-git push -u origin feature/본인이름
-```
-
-`-u origin feature/본인이름`은 처음 한 번만 입력하면 되고, 그 후로는:
-
-```bash
-git push
-```
-
-만 입력하면 됩니다.
-
-> push 시 GitHub 계정과 **Personal Access Token**을 물어볼 수 있습니다.
-> 사용자명에는 GitHub ID, 비밀번호 자리에는 앞서 발급받은 토큰을 붙여넣으세요.
-
----
-
-## 8. Pull Request (Merge Request) 보내기
-
-> GitHub에서는 **Pull Request (PR)**, GitLab에서는 **Merge Request (MR)** 이라고 부릅니다. 같은 개념입니다.
-
-내 브랜치의 작업을 main 브랜치에 합치자고 요청하는 과정입니다.
-
-### 8.1 GitHub 웹페이지에서 PR 만들기
-
-1. 브라우저에서 <https://github.com/dohyunKim0309/CNN_Accelerator> 접속
-2. push 직후라면 노란 띠로 **"Compare & pull request"** 버튼이 보일 것입니다. 클릭.
-3. 안 보이면 상단 **Pull requests** 탭 → **New pull request** 클릭
-
-### 8.2 브랜치 설정
-
-- **base**: `main` (합쳐질 대상 브랜치)
-- **compare**: `feature/본인이름` (내 작업 브랜치)
-
-### 8.3 PR 작성
-
-- **Title**: 어떤 작업인지 한 줄 요약 (예: `Add convolution layer implementation`)
-- **Description**: 무엇을, 왜 변경했는지 설명. 예시:
-
-````
-## 작업 내용
-- Conv2D 레이어 클래스 추가
-- 입력 채널/출력 채널 파라미터 처리
-
-## 테스트
-- 3x3 커널 단위 테스트 통과
-
-## 비고
-- @리뷰어이름 리뷰 부탁드립니다
-````
-
-### 8.4 Create pull request 클릭
-
-PR이 생성됩니다. 이제 팀원이 코드를 검토(review)하고, OK 사인이 나면 **Merge pull request** 버튼으로 main에 합쳐집니다.
-
-### 8.5 PR이 merge된 후
-
-내 로컬 브랜치를 main과 동기화합니다.
-
-```bash
-# main으로 이동
-git checkout main
-
-# 최신 코드 가져오기
-git pull origin main
-
-# 다 끝난 브랜치는 삭제해도 됩니다 (선택)
-git branch -d feature/본인이름
-```
-
----
-
-## 9. 자주 발생하는 문제와 해결법
-
-### Q1. `git push` 시 인증 실패
-
-→ Personal Access Token이 만료되었거나 잘못 입력한 경우입니다. 2.2를 참고해 토큰을 다시 발급받으세요.
-
-### Q2. `git pull` 시 conflict (충돌) 발생
-
-→ 여러 사람이 같은 파일을 수정한 경우입니다. 충돌난 파일을 VSCode로 열면 다음과 같이 표시됩니다.
-
-```
-<<<<<<< HEAD
-내가 작성한 내용
-=======
-다른 사람이 작성한 내용
->>>>>>> main
-```
-
-이 부분을 직접 수정해서 원하는 형태로 고친 뒤 `<<<<<<<`, `=======`, `>>>>>>>` 줄을 모두 지우고, 다시 add/commit/push 하면 됩니다.
-
-VSCode에서는 GitLens/내장 Git 기능이 **"Accept Current Change"**, **"Accept Incoming Change"**, **"Accept Both Changes"** 버튼을 제공해서 클릭 한 번으로 해결할 수 있습니다.
-
-### Q3. 잘못 add 했을 때
-
-```bash
-git reset HEAD filename
-```
-
-### Q4. 마지막 commit 메시지 수정
-
-```bash
-git commit --amend -m "새로운 메시지"
-```
-
-> 단, 이미 push한 commit은 수정하지 않는 게 좋습니다.
-
-### Q5. 변경사항 전부 취소하고 싶을 때 (위험!)
-
-```bash
-git checkout -- .
-```
-
-→ 아직 add하지 않은 변경사항이 모두 사라집니다.
-
-### Q6. 다른 브랜치로 이동하려는데 안 됨
-
-→ 현재 브랜치에서 변경사항을 commit하거나 stash해야 합니다.
-
-```bash
-git stash         # 잠시 저장
-git checkout main # 다른 브랜치로 이동
-git stash pop     # 다시 돌아와서 꺼내기
-```
-
----
-
-## 10. 핵심 명령어 요약
-
-### 일상적인 작업 흐름
-
-```bash
-# 1. 작업 시작 전 - 최신 코드 받기
-git checkout main
-git pull origin main
-
-# 2. 본인 브랜치로 이동 (또는 새로 생성)
-git checkout feature/본인이름
-# 또는 새 브랜치: git checkout -b feature/새기능
-
-# 3. 코드 작업
-
-# 4. 변경사항 확인
-git status
-
-# 5. add, commit, push
-git add .
-git commit -m "작업 내용"
-git push
-```
-
-### 자주 쓰는 명령어 치트시트
-
-| 명령어 | 설명 |
-|---|---|
-| `git clone <URL>` | Repository를 로컬로 복제 |
-| `git status` | 현재 상태 확인 |
-| `git branch` | 브랜치 목록 보기 |
-| `git checkout -b <이름>` | 새 브랜치 만들고 이동 |
-| `git checkout <이름>` | 기존 브랜치로 이동 |
-| `git pull origin main` | 원격 main 브랜치 최신화 |
-| `git add .` | 모든 변경 파일 스테이징 |
-| `git commit -m "메시지"` | 변경사항 확정 |
-| `git push` | 원격 저장소에 업로드 |
-| `git log --oneline` | commit 이력 한 줄로 보기 |
-| `git diff` | 변경 내용 비교 |
+scope 예시: `conv1`, `conv2`, `maxpool`, `fc`, `tb`, `scripts`, `docs`.
+
+좋은 예:
+- `conv2: fix adder drain bug for last 2 pixels`
+- `scripts/weights: add Conv1 SIMD packing with exhaustive verify`
+- `tb: unify hex file paths to relative data/`
+
+피할 것:
+- `update`, `fix`, `work in progress` 같은 정보 없는 메시지
+- 한 commit 에 여러 module 섞기 (가능하면 scope 별 분리)
+
+### 9.3 Code review 체크리스트
+
+- [ ] Reset polarity 가 본인 모듈 convention 과 맞는지 (Conv1 active low, 나머지 active high)
+- [ ] BRAM read latency (L) 가 가정한 값과 일치 (c1c2 L=2, c2pool L=1, conv2_weight L=2)
+- [ ] Hex 포맷 (padding, packing order) 이 본 문서 §2 와 일치
+- [ ] DSP48E1 / unisim 의존 코드는 simulation library 명시
+- [ ] FSM state transition 이 다른 engine 의 handshake (rdone/wdone) 와 정렬
 
 ---
 
 ## 마무리
 
-처음에는 명령어가 익숙하지 않아 헷갈릴 수 있지만, 며칠만 반복하면 자연스럽게 손이 갑니다.
-모르는 게 있으면 `git help <명령어>` 또는 팀원에게 편하게 물어보세요.
+본 문서는 **convention 의 single source of truth** 입니다. RTL 에서 hex 포맷이 본 문서와 다르면 본 문서가 우선 (또는 본 문서를 update). 변경 시 PR 에 본 문서 갱신 포함.
 
-**Happy Coding!**
+질문 / 모호한 부분 → 김도현 (Conv2, 본 문서 작성자) 또는 해당 모듈 담당자에게 문의.

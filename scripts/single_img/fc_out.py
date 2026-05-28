@@ -3,11 +3,11 @@ import numpy as np
 # -------------------------------------------------------
 # 파일 경로 설정 (프로젝트 루트에서 실행한다고 가정)
 # -------------------------------------------------------
-INPUT_FILE   = "../../data/npy/input.npy"
-WEIGHT1_FILE = "../../data/npy/layer1_0_weight.npy"
-WEIGHT2_FILE = "../../data/npy/layer2_0_weight.npy"
-FC1_FILE     = "../../data/npy/fc1_weight.npy"
-OUTPUT_HEX   = "../../data/hex_layer_by_layer/fc_output.hex"
+INPUT_FILE   = "../../data/_base_npy/input.npy"
+WEIGHT1_FILE = "../../data/_base_npy/layer1_0_weight.npy"
+WEIGHT2_FILE = "../../data/_base_npy/layer2_0_weight.npy"
+FC1_FILE     = "../../data/_base_npy/fc1_weight.npy"
+OUTPUT_HEX   = "../../data/single_img/fc_output.hex"
 
 # -------------------------------------------------------
 # 파일 로드

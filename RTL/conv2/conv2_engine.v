@@ -188,6 +188,7 @@ module conv2_engine (
 
             line_buffer #(.WIDTH(8), .DEPTH(25)) lb1_inst (
                 .clk  (clk),
+                .rst  (rst),
                 .en   (fsm_shift_en),
                 .din  (bram_byte),
                 .dout (lb1_out)
@@ -195,6 +196,7 @@ module conv2_engine (
 
             line_buffer #(.WIDTH(8), .DEPTH(25)) lb2_inst (
                 .clk  (clk),
+                .rst  (rst),
                 .en   (fsm_shift_en),
                 .din  (lb1_out),
                 .dout (lb2_out)
@@ -202,6 +204,7 @@ module conv2_engine (
 
             window_register #(.WIDTH(8)) win_inst (
                 .clk     (clk),
+                .rst     (rst),
                 .en      (fsm_shift_en),
                 .row2_in (bram_byte),
                 .row1_in (lb1_out),
