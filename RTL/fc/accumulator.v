@@ -55,15 +55,16 @@ module fc_accumulator #(
                     acc1 <= acc1 + $signed(sum1);
                 end
 
-                // last: 현재 edge 의 sum 이 마지막 → 최종값 = acc(이전) + sum
-                // clear 와 last 가 동시에 올 수 있는 경우(144=1, 실제 없음)도 처리
+                // last: acc0/acc1 이 이미 모든 partial sum 을 포함하고 있음.
+                // (pair 0~3: last 사이클에 sum=0이므로 acc가 정확,
+                //  pair 4  : adder_en=0이라 sum이 hold되어 있으므로 acc만 사용)
                 if (last) begin
                     if (clear) begin
                         logit0 <= $signed(sum0);
                         logit1 <= $signed(sum1);
                     end else begin
-                        logit0 <= acc0 + $signed(sum0);
-                        logit1 <= acc1 + $signed(sum1);
+                        logit0 <= acc0;
+                        logit1 <= acc1;
                     end
                     logit_valid <= 1'b1;
                 end
