@@ -23,7 +23,7 @@ LUT/FF: ~15K / ~8K (추정)
 Cycle/image: ~1,796 @ 180 MHz ≈ 10.0 μs
 ```
 
-자세한 cycle 분해는 `conv2_timing_tables.md` 참조.
+자세한 cycle 분해는 `conv2_timing.md` (특히 §8 testbench cycle 매핑, §11 부록) 참조.
 
 ---
 
@@ -113,7 +113,7 @@ weight 범위 [-127, 127] 이면 -128 carry overflow 없음 → 보정 단순.
 - 동시에 sel 0→1→2 변화로 출력 (r, 23) 의 K_col contribution 누적.
 - 결과: PE idle 0, 출력 (r, 23) 계산 + window 정렬 동시 수행.
 
-→ ~70 cycle/image 절약. cycle-by-cycle: `conv2_timing_tables.md §3`.
+→ ~70 cycle/image 절약. cycle-by-cycle: `conv2_timing.md §3` (분석) / `§11.3` (컴팩트 표).
 
 ### 4.5 Counter cap @ (25, 25) + DRAIN state (마지막 행)
 
@@ -123,7 +123,7 @@ weight 범위 [-127, 127] 이면 -128 carry overflow 없음 → 보정 단순.
 
 마지막 PE input 이후 pipeline drain (12 cycle) 을 위해 DRAIN state 진입 → DONE.
 
-상세: `conv2_timing_tables.md §4`.
+상세: `conv2_timing.md §4` (분석) / `§11.4` (컴팩트 표).
 
 ### 4.6 Adder tree `en` 의 5-cycle window 보장
 
@@ -194,7 +194,7 @@ module conv2_engine (
 - FSM 의 `output_pixel_cnt` 와 **다름** — `output_pixel_cnt` 는 PE input 시점, `write_addr` 는 c2pool write 시점 (pipeline 12 cycle 후).
 - DRAIN→DONE 시 0 으로 reset (다음 image 의 ping-pong bank 첫 픽셀부터 쓰기).
 
-**rdone/wdone 발생 정확 cycle** (`conv2_timing_tables.md §4` 참조):
+**rdone/wdone 발생 정확 cycle** (`conv2_timing.md §4.1` / `§8.3` 참조):
 - `rdone`: 마지막 ADV (cycle 1784) 의 다음 cycle (1786). DRAIN entry 후 안전하게 input bank 해제.
 - `wdone`: 마지막 c2pool write (cycle 1795 edge) 의 다음 cycle (1796). DRAIN exit edge 직전.
 
@@ -211,7 +211,7 @@ module conv2_engine (
 | 3 | `kcol_accumulator` | 3-cycle pattern, kw_phase=0/1/2 |
 | 4 | `truncate_relu` | 경계값 (±127, ±128) + random |
 | 5 | `weight_loader` | BMG read 와 PE broadcast 의 3-stage delay 정합성 |
-| 6 | `conv2_fsm` | cycle trace 가 `conv2_timing_tables.md` verification anchors A1~A10 와 일치 |
+| 6 | `conv2_fsm` | cycle trace 가 `conv2_timing.md §7` verification anchors A1~A11 와 일치 |
 
 ### 6.2 통합 검증 (`conv2_engine`)
 
@@ -274,15 +274,14 @@ module conv2_engine (
 
 ### 7.4 검증 anchor
 
-- 각 cycle 의 register 값 dump 후 `conv2_timing_tables.md` 표 A1~A10 과 비교 (특히 cycle 56, 57, 125, 129, 1775, 1784, 1796, 1797).
+- 각 cycle 의 register 값 dump 후 `conv2_timing.md §7` anchors A1~A11 과 비교 (특히 cycle 56, 57, 125, 129, 1775, 1784, 1795, 1796, 1797).
 - 1 image 처리 후 c2pool BRAM 내용 = `scripts/golden_sim/0_reference.py` 의 `fmap2[0]` 와 bit-exact.
 
 ---
 
 ## 8. 참조 문서
 
-- **`conv2_timing_tables.md`** — cycle-by-cycle 표 + verification anchors. testbench 검증의 정본.
-- **`conv2_timing.md`** — 상세 timing 분석 + open items + 책임 분리 설명. AI/long-form 용.
+- **`conv2_timing.md`** — cycle-by-cycle 분석 + verification anchors + testbench 매핑 + 컴팩트 부록 표. timing 의 single source of truth.
 - **`../../CONV2_TIMING_FIX.md`** — c1c2 BRAM L=1 → L=2 fix 의 cycle-by-cycle 증명.
 - **`conv2_adder_drain_bug_fix.md`** — adder_tree `en` window 누락 bug 의 분석 및 수정 (image 28 에서 발견된 마지막 2 픽셀 오염).
 - **`../../docs/DSP48E1_signed8x8_SIMD_Packing.md`** — SIMD packing 알고리즘.

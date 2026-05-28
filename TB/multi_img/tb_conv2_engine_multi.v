@@ -168,11 +168,14 @@ module tb_conv2_engine_multi;
 
     //==========================================================================
     // Pre-loaded image data (1D flat for V2001 호환)
-    //   c1c2_data  [img_idx * 676 + (h*26 + w)]  = 64-bit
-    //   c2pool_data[img_idx * 576 + (h*24 + w)]  = 128-bit
+    //   c1c2_data  [img_idx * 1024 + (h*32 + w)] = 64-bit   (padded BMG bank format)
+    //   c2pool_data[img_idx * 576  + (h*24 + w)] = 128-bit  (compact write_addr 순)
+    //
+    //   c1c2 padded 1024 entry/image (32×32, 26×26 valid + zero padding) — Python
+    //   에서 이미 padded 로 생성되어 BMG addr {bank, h[4:0], w[4:0]} 와 직접 매핑.
     //==========================================================================
-    reg [63:0]  c1c2_data   [0:N_IMAGES*676-1];   // 67,600 entries
-    reg [127:0] c2pool_data [0:N_IMAGES*576-1];   // 57,600 entries
+    reg [63:0]  c1c2_data   [0:N_IMAGES*1024-1];  // 102,400 entries
+    reg [127:0] c2pool_data [0:N_IMAGES*576-1];   //  57,600 entries
 
     //==========================================================================
     // Statistics
@@ -190,23 +193,21 @@ module tb_conv2_engine_multi;
     // Task: Virtual Conv1 — write image to bram_c1_to_c2 Port A
     //
     //   bank = img_idx % 2
-    //   addr = {bank, h[4:0], w[4:0]} = bank*1024 + h*32 + w
-    //   data = c1c2_data[img_idx*676 + h*26+w]  (이미 packed 64-bit, 1D flat)
+    //   c1c2 data 는 이미 padded format (1024 entry, h*32+w 순서) 으로 저장됨.
+    //   → bank local addr k = 0..1023 그대로 BMG addr 의 하위 10-bit 로 사용.
+    //   → padding entry (h≥26 또는 w≥26) 는 0 이므로 BMG 에도 0 write (무해).
     //==========================================================================
     task write_image;
         input integer img_idx;
-        integer h, w, ent, bank;
+        integer k, bank;
         begin
             bank = img_idx & 1;
-            for (h = 0; h < 26; h = h + 1) begin
-                for (w = 0; w < 26; w = w + 1) begin
-                    ent = h * 26 + w;
-                    @(negedge clk);
-                    c1c2_ena_a   = 1'b1;
-                    c1c2_wea_a   = 8'hFF;          // 모든 byte write
-                    c1c2_addr_a  = (bank << 10) | (h << 5) | w;
-                    c1c2_din_a   = c1c2_data[img_idx * 676 + ent];
-                end
+            for (k = 0; k < 1024; k = k + 1) begin
+                @(negedge clk);
+                c1c2_ena_a   = 1'b1;
+                c1c2_wea_a   = 8'hFF;             // 모든 byte write
+                c1c2_addr_a  = (bank << 10) | k;
+                c1c2_din_a   = c1c2_data[img_idx * 1024 + k];
             end
             @(negedge clk);
             c1c2_ena_a = 1'b0;

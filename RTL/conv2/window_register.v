@@ -31,7 +31,7 @@
 //
 //   유효 window 조건 (외부 FSM 책임):
 //     Conv1: col >= 2 && row >= 2 (28×28 → 26×26 출력)
-//     Conv2: PIPELINE_FILL 종료 + counter 진행 (상세는 conv2_timing_tables.md)
+//     Conv2: PIPELINE_FILL 종료 + counter 진행 (상세는 conv2_timing.md)
 //////////////////////////////////////////////////////////////////////////////////
 
 module window_register #(

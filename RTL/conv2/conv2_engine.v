@@ -6,7 +6,7 @@
 //   Layer: input (8 IC × 26 × 26) INT8 → output (16 OC × 24 × 24) INT8.
 //
 //   Sub-module 인스턴스화 + 신호 라우팅 + delay pipeline 만 담당.
-//   상세 timing 은 `conv2_timing_tables.md`, 설계 의도는 `conv2_design.md` 참조.
+//   상세 timing 은 `conv2_timing.md`, 설계 의도는 `conv2_design.md` 참조.
 //
 //   Pipeline depth (PE input @ T → c2pool mem updated):
 //     PE 4 + adder 5 + kcol_acc 1 + truncate_relu 1 + BRAM write 1 = 12 cycle

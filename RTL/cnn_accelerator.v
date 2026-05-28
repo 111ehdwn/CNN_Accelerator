@@ -15,6 +15,7 @@ module cnn_accelerator(
 
     // ===== BRAM2 Port B (external, to AXI BRAM Controller #2 -> PS read) =====
 );
+    wire reset = ~resetn;
 
 
 endmodule
