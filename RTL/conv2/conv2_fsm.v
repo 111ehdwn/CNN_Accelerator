@@ -38,7 +38,7 @@
 //     dout @ cycle T = mem[addr @ "T 직전 2 shift_en=1 events"]
 //     첫 valid window: counter (2, 4) 의 FILL 종료 edge 후 cycle 의 win_r2 =
 //                       [(2, 0), (2, 1), (2, 2)] = 출력 (0, 0) 의 input row 2.
-//     상세 cycle-by-cycle 표: docs RTL/conv2/conv2_timing_tables.md
+//     상세 cycle-by-cycle 표: docs RTL/conv2/conv2_timing.md
 //
 //   상태 전이 조건:
 //     PIPELINE_FILL → COMPUTE_HOLD:
