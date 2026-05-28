@@ -13,16 +13,20 @@ module conv1_engine (
     input  wire        start,
     output wire        done,
 
-    // 입력 BRAM (읽기)
+    // ping-pong bank select (외부에서 image 별 토글)
+    input  wire        bank_sel,
+
+    // 입력 BRAM (Read, Port B of conv1_input_bram)
     output wire [9:0]        in_bram_addr,
     output wire              in_bram_en,
     input  wire signed [7:0] in_bram_dout,
 
-    // weight BRAM (읽기)
+    // Weight BRAM (Read, Port B of conv1_weight_bram)
     output wire [5:0]  w_bram_addr,
     output wire        w_bram_en,
     input  wire [31:0] w_bram_dout,
 
+<<<<<<< HEAD
     // 출력: 128-bit c1c2 버퍼 인터페이스 (2 pixels per address, byte write enable)
     // 레이아웃: [127:96]=Run2 odd,  [95:64]=Run2 even
     //          [ 63:32]=Run1 odd,  [ 31: 0]=Run1 even
@@ -30,6 +34,17 @@ module conv1_engine (
     output wire               c1c2_we,      // write enable (odd pixel 도착 시 1사이클 펄스)
     output wire [15:0]        c1c2_wea,     // byte write enable: Run1=16'h00FF / Run2=16'hFF00
     output wire [127:0]       c1c2_din      // 128-bit 데이터 버스
+=======
+    // c1c2 BMG Port A (Write, byte-write enable, 64-bit)
+    //   Round 0 (sel=0): ch0..3 (= oc0..3) → byte 0..3, wea = 8'b00001111
+    //   Round 1 (sel=1): ch4..7 (= oc4..7) → byte 4..7, wea = 8'b11110000
+    //   같은 addr 에 2 round 모두 write → BMG byte-write 가 8-byte word merge.
+    //   addr 형식: {bank_sel, h[4:0], w[4:0]} padded → bank*1024 + h*32 + w
+    output wire        c1c2_we,         // ENA (= 두 round 모두 1)
+    output wire [7:0]  c1c2_wea,        // round 별 byte mask
+    output wire [10:0] c1c2_addr,       // {bank_sel, h[4:0], w[4:0]}
+    output wire [63:0] c1c2_din         // {ch7, ch6, ch5, ch4, ch3, ch2, ch1, ch0}
+>>>>>>> 12f287f260ce26553f81628f33c1bef5ec0139cb
 );
 
     //==========================================================================
@@ -269,6 +284,7 @@ module conv1_engine (
     );
 
     //==========================================================================
+<<<<<<< HEAD
     // 9. 제어 신호 동기화 3단 파이프라인 + 짝수 픽셀 버퍼
     //==========================================================================
     // 데이터 레지스터 (tr_out → ch_final, 1클럭)
@@ -279,6 +295,18 @@ module conv1_engine (
     reg [2:0] sel_pipe;
 
     // 주소 3단 파이프라인
+=======
+    // 9. 제어 신호 동기화를 위한 3단 파이프라인 시프트 체인
+    //   chX_final: tr_outX 의 1 cycle 지연 latch (round 0 용)
+    //   round 1 은 tr_outX 직접 사용 (1 cycle 보정)
+    //==========================================================================
+    reg signed [7:0] ch0_final, ch1_final, ch2_final, ch3_final;
+
+    reg [2:0] we_pipe;
+    reg [2:0] sel_pipe;
+
+    // padded 형식 주소: h*32+w (BMG bank addr 의 하위 10-bit). 26 valid + 6 pad.
+>>>>>>> 12f287f260ce26553f81628f33c1bef5ec0139cb
     reg [9:0] addr_pipe [0:2];
 
     // 짝수 픽셀 데이터 버퍼 (128-bit 출력용)
@@ -294,21 +322,38 @@ module conv1_engine (
         if (rst) begin
             ch0_final <= 8'sd0; ch1_final <= 8'sd0;
             ch2_final <= 8'sd0; ch3_final <= 8'sd0;
+<<<<<<< HEAD
             we_pipe      <= 3'b000;
             sel_pipe     <= 3'b000;
+=======
+
+            we_pipe   <= 3'b000;
+            sel_pipe  <= 3'b000;
+>>>>>>> 12f287f260ce26553f81628f33c1bef5ec0139cb
             addr_pipe[0] <= 10'd0; addr_pipe[1] <= 10'd0; addr_pipe[2] <= 10'd0;
             pixel_buf    <= 64'd0;
         end else begin
+<<<<<<< HEAD
             // 1) 데이터 패스: tr_out → ch_final (1클럭 레지스터)
+=======
+>>>>>>> 12f287f260ce26553f81628f33c1bef5ec0139cb
             ch0_final <= tr_out0;
             ch1_final <= tr_out1;
             ch2_final <= tr_out2;
             ch3_final <= tr_out3;
 
+<<<<<<< HEAD
             // 2) 제어 패스: 3클럭 파이프라인
             we_pipe  <= {we_pipe[1:0],  out_valid};
             sel_pipe <= {sel_pipe[1:0], out_sel};
             addr_pipe[0] <= out_row * 10'd26 + {5'd0, out_col};
+=======
+            we_pipe  <= {we_pipe[1:0],  out_valid};
+            sel_pipe <= {sel_pipe[1:0], out_sel};
+
+            // padded h*32+w (multiplier 제거 → shift+concat)
+            addr_pipe[0] <= {out_row[4:0], out_col[4:0]};
+>>>>>>> 12f287f260ce26553f81628f33c1bef5ec0139cb
             addr_pipe[1] <= addr_pipe[0];
             addr_pipe[2] <= addr_pipe[1];
 
@@ -319,6 +364,7 @@ module conv1_engine (
     end
 
     //==========================================================================
+<<<<<<< HEAD
     // 10. 128-bit c1c2 출력 매핑
     //     [127:96] = Run2 odd  pixel {tr_out3, tr_out2, tr_out1, tr_out0}
     //     [ 95:64] = Run2 even pixel (pixel_buf[63:32])
@@ -333,4 +379,30 @@ module conv1_engine (
     assign c1c2_wea  = sel_pipe[2] ? 16'hFF00 : 16'h00FF;
     assign c1c2_din  = {cur_r2, pixel_buf[63:32], cur_r1, pixel_buf[31:0]};
 
+=======
+    // 10. c1c2 BMG Port A 결선
+    //
+    //   Round 0 (sel_pipe[2]=0): ch0..3 (oc0..3) → byte 0..3, wea = 8'b00001111
+    //     - ch0..3 데이터는 ch*_final (1 cycle 지연된 latch) 사용
+    //   Round 1 (sel_pipe[2]=1): ch4..7 (oc4..7) → byte 4..7, wea = 8'b11110000
+    //     - ch4..7 데이터는 tr_out0..3 직접 (= 1 cycle 보정: round 2 가 round 1 보다
+    //       1 cycle 늦게 정렬되는 현상 상쇄)
+    //
+    //   같은 addr 에 두 round 모두 write → BMG 의 byte-write 가 8-byte word merge.
+    //
+    //   addr 형식: {bank_sel, addr_pipe[2]} = {bank, h[4:0], w[4:0]}
+    //==========================================================================
+    wire round0_active = (sel_pipe[2] == 1'b0);
+
+    wire [63:0] din_round0 = {32'd0,
+                              ch3_final, ch2_final, ch1_final, ch0_final};
+    wire [63:0] din_round1 = {tr_out3, tr_out2, tr_out1, tr_out0,
+                              32'd0};
+
+    assign c1c2_we   = we_pipe[2];
+    assign c1c2_wea  = round0_active ? 8'b00001111 : 8'b11110000;
+    assign c1c2_addr = {bank_sel, addr_pipe[2]};
+    assign c1c2_din  = round0_active ? din_round0 : din_round1;
+
+>>>>>>> 12f287f260ce26553f81628f33c1bef5ec0139cb
 endmodule

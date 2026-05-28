@@ -143,9 +143,14 @@ module conv2_engine (
     //
     //   IP 이름 (conv2_weight_bram) 은 Vivado IP integrator 에서 일치해야 함.
     //==========================================================================
+    //   ★ Port A 의 ENA, WEA 둘 다 c2w_ena 로 결선:
+    //     실제 BMG IP ("Use ENA Pin" + "Byte Write Disable") 는 write 시
+    //     ENA=1 AND WEA=1 둘 다 필요. ena 미결선 시 floating 0 → write 안 됨 →
+    //     weight 전부 0 → 모든 mul=0 → 출력 0.
     conv2_weight_bram c2w_bmg_inst (
         .clka  (clk),
-        .wea   (c2w_ena),                 // 1-bit wea (byte-enable disabled)
+        .ena   (c2w_ena),                 // Port A clock + write enable
+        .wea   (c2w_ena),                 // 1-bit wea (Byte Write Disable)
         .addra (c2w_addra),
         .dina  (c2w_dina),
 

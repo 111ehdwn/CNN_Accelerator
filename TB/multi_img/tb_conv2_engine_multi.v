@@ -1,56 +1,26 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
-// Multi-image bit-exact testbench for conv2_engine
+// tb_conv2_engine_multi.v
+// Multi-image testbench for conv2_engine (100 image bit-exact check, real BMG IPs)
 //
-//   - 100 image 순차 처리 (ping-pong bank toggle 검증)
-//   - 실제 Vivado BMG IP 직접 인스턴스:
-//       bram_c1_to_c2   (Conv1→Conv2, L=2, depth 2048, 64-bit)
-//       bram_c2_to_pool (Conv2→Maxpool, L=1, depth 2048, 128-bit)
-//   - Virtual Conv1: BMG Port A 직접 write (TB code 가 pack + bank_sel 처리)
-//   - Virtual Maxpool: BMG Port B 직접 read + expected 비교
-//   - 각 image 별 PASS/FAIL + 종합 통계
+//   3 process 병렬:
+//     main_process    : reset → init_weight → start → wait all_done → report
+//     conv1_process   : ping-pong backpressure 로 image write + prior_wdone
+//     maxpool_process : wdone 마다 c2pool BMG read + expected 비교 + succ_rdone
 //
-//   주의:
-//     - 이 TB 는 사용자가 만든 BMG IP 두 개 (bram_c1_to_c2, bram_c2_to_pool) 가
-//       Vivado 프로젝트에 존재해야 작동.
-//     - conv2_weight_bram 은 sim only behavioral 모델 사용 (single_img TB 와 동일).
-//     - hex 파일들이 HEX_DIR 경로에 있어야 함 (200 files: imgXXX_c1c2.hex / imgXXX_c2pool.hex).
+//   Weight init: init_weight() task 가 576 cycle 동안 Port A 의 c2w_ena/addra/dina 를
+//                driving 하여 실제 PS 동작 emulation (옛 hierarchical $readmemh 방식 제거).
 //
-//   Path override 예시:
-//     xelab -d HEX_DIR=\"C:/path/to/multi_img\" -d WEIGHT_HEX=\"C:/.../weights.hex\" ...
+//   필요한 BMG IP (Vivado 프로젝트에 미리 생성):
+//     bram_c1_to_c2     (Conv1→Conv2, L=2, depth 2048, 64-bit, byte-write 8-bit)
+//     bram_c2_to_pool   (Conv2→Maxpool, L=1, depth 2048, 128-bit, byte-write disable)
+//     conv2_weight_bram (PS→Conv2 weight, L=2, depth 1024, 32-bit, REGCEB pin 노출)
+//   상세: docs/ip_spec/block_memory_generator.md
 //////////////////////////////////////////////////////////////////////////////////
 
-// V2001 호환 — 단일 big hex 파일 사용 (per-image 가 아닌 concatenated).
-// Hex 파일 위치 변경 시 아래 3 define 만 수정.
 `define CONV1_ALL_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_c1c2.hex"
 `define CONV2_ALL_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_c2pool.hex"
 `define WEIGHT_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_weights_simd.hex"
-
-
-//////////////////////////////////////////////////////////////////////////////////
-// Behavioral conv2_weight_bram (sim only — 사용자가 BMG IP 안 만들었을 경우 대체)
-// 만약 실제 BMG IP `conv2_weight_bram` 이 프로젝트에 있으면 본 모듈 제거.
-//////////////////////////////////////////////////////////////////////////////////
-module conv2_weight_bram (
-    input  wire        clka,
-    input  wire        wea,
-    input  wire [9:0]  addra,
-    input  wire [31:0] dina,
-    input  wire        clkb,
-    input  wire        enb,
-    input  wire        regceb,
-    input  wire [9:0]  addrb,
-    output reg  [31:0] doutb
-);
-    reg [31:0] mem [0:1023];
-    reg [31:0] core;
-    initial begin core = 32'h0; doutb = 32'h0; end
-    always @(posedge clka) if (wea) mem[addra] <= dina;
-    always @(posedge clkb) begin
-        if (enb)    core  <= mem[addrb];
-        if (regceb) doutb <= core;
-    end
-endmodule
 
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -71,6 +41,11 @@ module tb_conv2_engine_multi;
     // DUT signals
     //==========================================================================
     reg          start          = 1'b0;
+
+    // Conv2 weight Port A — TB 가 init_weight task 로 driving (실제 PS 동작 emulation)
+    reg          c2w_ena        = 1'b0;
+    reg  [9:0]   c2w_addra      = 10'd0;
+    reg  [31:0]  c2w_dina       = 32'd0;
 
     // c1c2 Port B (Conv2 read)
     wire         c1c2_re;
@@ -100,9 +75,7 @@ module tb_conv2_engine_multi;
     wire         wdone;
 
     //==========================================================================
-    // BMG IP: bram_c1_to_c2 (사용자가 만든 IP)
-    //   Port A : Virtual Conv1 write (TB 가 구동)
-    //   Port B : Conv2 read (DUT 가 구동)
+    // BMG IP: bram_c1_to_c2 (Conv1→Conv2 ping-pong, L=2)
     //==========================================================================
     bram_c1_to_c2 c1c2_bram (
         .clka  (clk),
@@ -118,15 +91,12 @@ module tb_conv2_engine_multi;
     );
 
     //==========================================================================
-    // BMG IP: bram_c2_to_pool (사용자가 만든 IP)
-    //   Port A : Conv2 write (DUT 가 구동)
-    //   Port B : Virtual Maxpool read (TB 가 구동)
-    //   wea : Byte Write Disable → 1-bit (1'b1 고정)
+    // BMG IP: bram_c2_to_pool (Conv2→Maxpool ping-pong, L=1)
     //==========================================================================
     bram_c2_to_pool c2pool_bram (
         .clka  (clk),
         .ena   (c2pool_we_a),
-        .wea   (1'b1),                // 1-bit, 항상 write all
+        .wea   (1'b1),
         .addra (c2pool_addr_a),
         .dina  (c2pool_din_a),
 
@@ -137,17 +107,18 @@ module tb_conv2_engine_multi;
     );
 
     //==========================================================================
-    // DUT
+    // DUT — 실제 conv2_weight_bram BMG IP 사용
+    //   c2w_ena/addra/dina 가 TB reg 로 연결되어 init_weight task 가 구동.
     //==========================================================================
     conv2_engine dut (
         .clk         (clk),
         .rst         (rst),
         .start       (start),
 
-        // Conv2 weight BMG (behavioral, sim only)
-        .c2w_ena     (1'b0),
-        .c2w_addra   (10'd0),
-        .c2w_dina    (32'd0),
+        // Conv2 weight BMG Port A (TB 가 init_weight 로 driving)
+        .c2w_ena     (c2w_ena),
+        .c2w_addra   (c2w_addra),
+        .c2w_dina    (c2w_dina),
 
         // c1c2 BMG Port B (DUT reads)
         .c1c2_re     (c1c2_re),
@@ -168,14 +139,14 @@ module tb_conv2_engine_multi;
 
     //==========================================================================
     // Pre-loaded image data (1D flat for V2001 호환)
-    //   c1c2_data  [img_idx * 1024 + (h*32 + w)] = 64-bit   (padded BMG bank format)
-    //   c2pool_data[img_idx * 576  + (h*24 + w)] = 128-bit  (compact write_addr 순)
-    //
-    //   c1c2 padded 1024 entry/image (32×32, 26×26 valid + zero padding) — Python
-    //   에서 이미 padded 로 생성되어 BMG addr {bank, h[4:0], w[4:0]} 와 직접 매핑.
     //==========================================================================
     reg [63:0]  c1c2_data   [0:N_IMAGES*1024-1];  // 102,400 entries
     reg [127:0] c2pool_data [0:N_IMAGES*576-1];   //  57,600 entries
+
+    //==========================================================================
+    // TB-local weight memory (init_weight 가 사용)
+    //==========================================================================
+    reg [31:0]  weight_mem  [0:575];
 
     //==========================================================================
     // Statistics
@@ -190,12 +161,28 @@ module tb_conv2_engine_multi;
     always @(posedge clk) if (!rst) cycle_cnt <= cycle_cnt + 1;
 
     //==========================================================================
+    // Task: init_weight — Port A 로 576 cycle 동안 weight write
+    //==========================================================================
+    task init_weight;
+        integer wi;
+        begin
+            $display("[TB] @ cycle %0d : init_weight start (576 cycle)", cycle_cnt);
+            for (wi = 0; wi < 576; wi = wi + 1) begin
+                @(negedge clk);
+                c2w_ena   = 1'b1;
+                c2w_addra = wi[9:0];
+                c2w_dina  = weight_mem[wi];
+            end
+            @(negedge clk);
+            c2w_ena   = 1'b0;
+            c2w_addra = 10'd0;
+            c2w_dina  = 32'd0;
+            $display("[TB] @ cycle %0d : init_weight done", cycle_cnt);
+        end
+    endtask
+
+    //==========================================================================
     // Task: Virtual Conv1 — write image to bram_c1_to_c2 Port A
-    //
-    //   bank = img_idx % 2
-    //   c1c2 data 는 이미 padded format (1024 entry, h*32+w 순서) 으로 저장됨.
-    //   → bank local addr k = 0..1023 그대로 BMG addr 의 하위 10-bit 로 사용.
-    //   → padding entry (h≥26 또는 w≥26) 는 0 이므로 BMG 에도 0 write (무해).
     //==========================================================================
     task write_image;
         input integer img_idx;
@@ -205,7 +192,7 @@ module tb_conv2_engine_multi;
             for (k = 0; k < 1024; k = k + 1) begin
                 @(negedge clk);
                 c1c2_ena_a   = 1'b1;
-                c1c2_wea_a   = 8'hFF;             // 모든 byte write
+                c1c2_wea_a   = 8'hFF;
                 c1c2_addr_a  = (bank << 10) | k;
                 c1c2_din_a   = c1c2_data[img_idx * 1024 + k];
             end
@@ -229,10 +216,6 @@ module tb_conv2_engine_multi;
 
     //==========================================================================
     // Task: Virtual Maxpool — read c2pool BMG Port B and compare
-    //
-    //   bank = img_idx % 2
-    //   addr = {bank, write_addr[9:0]} = bank*1024 + i  (i = 0..575)
-    //   L=1 latency: addr@T → dout@T+1 → TB reads at iteration i+1
     //==========================================================================
     task compare_image;
         input  integer img_idx;
@@ -244,7 +227,6 @@ module tb_conv2_engine_multi;
 
             for (i = 0; i < 577; i = i + 1) begin
                 @(negedge clk);
-                // Issue read for addr i
                 if (i < 576) begin
                     c2pool_enb_b  = 1'b1;
                     c2pool_addr_b = (bank << 10) | i[9:0];
@@ -252,13 +234,12 @@ module tb_conv2_engine_multi;
                     c2pool_enb_b  = 1'b0;
                 end
 
-                // Collect data from previous addr (i-1), L=1 lag
                 if (i > 0) begin
                     got = c2pool_doutb_b;
                     exp = c2pool_data[img_idx * 576 + (i - 1)];
                     if (got !== exp) begin
                         mm = mm + 1;
-                        if (mm <= 3)  // 처음 3개만 상세 출력
+                        if (mm <= 3)
                             $display("    MM img=%0d addr=%0d : got=%h exp=%h",
                                      img_idx, i - 1, got, exp);
                     end
@@ -285,8 +266,6 @@ module tb_conv2_engine_multi;
 
     //==========================================================================
     // Inter-process counters (auto-update)
-    //   rdone_count : Conv2 가 c1c2 bank 비운 횟수 → conv1_process backpressure
-    //   wdone_count : Conv2 가 c2pool bank 채운 횟수 → maxpool_process 동기
     //==========================================================================
     integer rdone_count = 0;
     integer wdone_count = 0;
@@ -303,29 +282,33 @@ module tb_conv2_engine_multi;
 
     //==========================================================================
     // Sync between processes
+    //   weight_loaded_flag: init_weight 완료 후 set. conv1_process 가 첫 write 전에 wait.
+    //                       (conv1 BMG 와 weight BMG 는 독립이라 race 없지만, sim
+    //                        시작 시 weight 가 정상 로딩 됐는지 명시적으로 보장)
     //==========================================================================
+    reg     weight_loaded_flag  = 1'b0;
     reg     all_done_flag       = 1'b0;
     integer cycle_at_start_pulse = 0;
 
     //==========================================================================
-    // PROCESS 1: Main — reset, start, wait for completion, report
+    // PROCESS 1: Main — reset, init_weight, start, wait for completion, report
     //==========================================================================
     integer i_main;
     initial begin : main_process
         $display("\n==========================================");
-        $display("  Conv2 multi-image testbench (N=%0d, parallel)", N_IMAGES);
+        $display("  Conv2 multi-image testbench (N=%0d, real BMG IP)", N_IMAGES);
         $display("==========================================");
         $display("  CONV1_ALL_HEX = %s", `CONV1_ALL_HEX);
         $display("  CONV2_ALL_HEX = %s", `CONV2_ALL_HEX);
         $display("  WEIGHT_HEX    = %s", `WEIGHT_HEX);
         $display("");
 
-        // Load data
+        // Load data (no hierarchical access to BMG)
         $readmemh(`CONV1_ALL_HEX, c1c2_data);
         $readmemh(`CONV2_ALL_HEX, c2pool_data);
-        $readmemh(`WEIGHT_HEX, dut.c2w_bmg_inst.mem);
-        $display("[TB] Loaded c1c2 (%0d) + c2pool (%0d) + weight (576)",
-                 N_IMAGES * 676, N_IMAGES * 576);
+        $readmemh(`WEIGHT_HEX, weight_mem);
+        $display("[TB] Loaded c1c2 (%0d) + c2pool (%0d) + weight (576) to TB mem",
+                 N_IMAGES * 1024, N_IMAGES * 576);
 
         // Init statistics
         for (i_main = 0; i_main < N_IMAGES; i_main = i_main + 1) begin
@@ -335,6 +318,9 @@ module tb_conv2_engine_multi;
         end
 
         // Init driving signals (defensive)
+        c2w_ena       = 1'b0;
+        c2w_addra     = 10'd0;
+        c2w_dina      = 32'd0;
         c1c2_ena_a    = 1'b0;
         c1c2_wea_a    = 8'h00;
         c2pool_enb_b  = 1'b0;
@@ -349,6 +335,10 @@ module tb_conv2_engine_multi;
         @(negedge clk);
         rst = 1'b0;
         $display("[TB] @ cycle %0d : reset released", cycle_cnt);
+
+        // init_weight (Port A 로 576 cycle 동안 weight write)
+        init_weight();
+        weight_loaded_flag = 1'b1;
 
         // Start pulse (LOAD_WEIGHTS 진입, 1회만)
         @(negedge clk); start = 1'b1;
@@ -381,19 +371,14 @@ module tb_conv2_engine_multi;
 
     //==========================================================================
     // PROCESS 2: Virtual Conv1 — image 별 write + prior_wdone, ping-pong backpressure
-    //
-    //   Backpressure: 동시 in-flight image 수 ≤ 2 (ping-pong bank 한계).
-    //     pending = i - rdone_count  (image 까지 wrote 했으나 Conv2 가 아직 안 끝낸 수)
-    //     쓸 수 있는 조건: pending < 2
+    //   weight_loaded_flag 대기 후 시작 (weight 로딩 완료 보장 — race 방지)
     //==========================================================================
     integer i_conv1;
     initial begin : conv1_process
-        // wait reset 해제
-        wait (rst == 1'b0);
+        wait (weight_loaded_flag == 1'b1);
         @(negedge clk);
 
         for (i_conv1 = 0; i_conv1 < N_IMAGES; i_conv1 = i_conv1 + 1) begin
-            // Backpressure
             wait ((i_conv1 - rdone_count) < 2);
 
             cycle_at_img_start[i_conv1] = cycle_cnt;
@@ -414,7 +399,6 @@ module tb_conv2_engine_multi;
             @(posedge wdone);
             cycle_at_wdone[i_max] = cycle_cnt;
 
-            // settle a few cycles for c2pool mem 안정화
             repeat (3) @(posedge clk);
 
             compare_image(i_max);
@@ -427,7 +411,6 @@ module tb_conv2_engine_multi;
                          i_max, cycle_at_wdone[i_max], per_image_mm[i_max]);
         end
 
-        // Main 에게 종료 알림
         all_done_flag = 1'b1;
     end
 
@@ -435,7 +418,7 @@ module tb_conv2_engine_multi;
     // Timeout
     //==========================================================================
     initial begin
-        #20000000;   // 20 ms = 약 3.6M cycle, 100 image × ~30K cycle 여유
+        #20000000;
         $display("\n[TB] !!! TIMEOUT @ cycle %0d !!!", cycle_cnt);
         $finish;
     end
