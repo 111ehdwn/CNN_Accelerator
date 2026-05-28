@@ -23,7 +23,6 @@
 
 // 절대 경로 (Windows 경로지만 forward slash 사용 — Verilog string 안전).
 // Hex 파일 위치 변경 시 아래 3 define 만 수정.
-// (Verilog-2001 은 string literal concat `"a" "b"` 미지원이라 직접 풀어 씀.)
 `define CONV1_HEX   "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv1_output_c1c2.hex"
 `define CONV2_HEX   "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_output_c2pool.hex"
 `define WEIGHT_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_weights_simd.hex"

@@ -69,6 +69,8 @@ row2_in = c1c2_dout     row1_in = lb1.dout     row0_in = lb2.dout
 | c2pool BRAM write (edge 에서 mem update) | 1 |
 | **합계 (PE input @ T → c2pool memory updated at edge T+11→T+12)** | **12** |
 
+**Pipelined 모듈의 `en` 게이팅 원칙**: `krow_ic_adder_tree` 는 5 stage 각각이 `en` 으로 게이팅됨. 마지막 valid 입력이 sum register 까지 도달하려면 `en=1` 이 **5 cycle 연속 유지** 되어야 함. `conv2_engine.v` 는 이를 위해 `adder_en = OR(pe_en_pipe[3..7])` 의 5-cycle window 로 정의 (단일 `pe_en_pipe[3]` 만 사용하면 마지막 입력이 s1 에서 stuck → kcol_accumulator 가 stale sum 누적). 상세 분석: **`conv2_adder_drain_bug_fix.md`**.
+
 ### 0.5 FSM (수정 후 — DRAIN 추가, cap 적용)
 
 8 states:
@@ -96,6 +98,7 @@ IDLE → LOAD_WEIGHTS → DONE ⇄ PIPELINE_FILL → COMPUTE_HOLD ⇄ COMPUTE_AD
 - **Cycle 0 = PIPELINE_FILL 의 첫 cycle** (DONE → PIPELINE_FILL 전이 직후 첫 cycle). counter @ 0 = (0, 0).
 - 절대 cycle 번호는 image 단위로 reset (다음 image 의 cycle 0 = 그 image 의 PIPELINE_FILL 첫 cycle).
 - PIPELINE_FILL 동안 shift_en=1 매 cycle → counter 매 cycle 증가. cycle k 의 counter = `(k div 26, k mod 26)`.
+- Testbench 가 측정하는 cycle 번호 (reset 해제 기준, IDLE / LOAD_WEIGHTS / DONE prelude 포함) 와의 매핑은 §10 참조.
 
 ---
 
@@ -252,10 +255,11 @@ Cycle 번호: pixel (r, c) HOLD0 cycle = `57 + 72*r + 3*c` for r=0..22; r=23 도
 | 1782 | HOLD kw=0 (pixel (23, 23)) | (25, 25) | 0 | (25, 25) | [(25, 23), (25, 24), (25, 25)] | 575 | **마지막 출력 (23, 23)** |
 | 1783 | HOLD kw=1 | (25, 25) | 0 | (25, 25) | (hold) | 575 | |
 | **1784** | **ADV  kw=2** | (25, 25) | 1 | (25, 25) | (hold) | 575 | **마지막 PE input cycle**. `output_pixel_cnt == 575` → edge 1784→1785: state ← **DRAIN**, drain_cnt ← 0, output_pixel_cnt → 576 |
-| 1785 | DRAIN drain=0 | (25, 25) | 0 | (25, 25) | (hold) | 576 | pipeline 진행 중 (PE 출력은 cycle 1788 에 도착, c2pool write 는 cycle 1796) |
+| 1785 | DRAIN drain=0 | (25, 25) | 0 | (25, 25) | (hold) | 576 | pipeline 진행 중 (PE 출력은 cycle 1788 에 도착, c2pool mem 갱신은 edge 1795→1796) |
 | 1786 | DRAIN drain=1 | (25, 25) | 0 | (25, 25) | (hold) | 576 | |
-| ... | DRAIN drain=2..10 | (25, 25) | 0 | (25, 25) | (hold) | 576 | |
-| 1796 | DRAIN drain=11 | (25, 25) | 0 | (25, 25) | (hold) | 576 | **마지막 c2pool write 가 edge 1796→1797 에 mem 갱신**. edge: state ← DONE, 모든 카운터 reset |
+| ... | DRAIN drain=2..9 | (25, 25) | 0 | (25, 25) | (hold) | 576 | |
+| 1795 | DRAIN drain=10 | (25, 25) | 0 | (25, 25) | (hold) | 576 | datapath: `c2pool_we_reg=1`, `c2pool_write_addr=575`, `c2pool_din` = (23, 23) 결과. **edge 1795→1796: c2pool mem[575] 갱신 + `wdone_reg ← 1`** (lag 12 pipeline, §0.4) |
+| 1796 | DRAIN drain=11 | (25, 25) | 0 | (25, 25) | (hold) | 576 | **`wdone=1`** (1-cycle pulse). edge 1796→1797: state ← DONE, 모든 카운터 reset |
 | 1797 | DONE | (0, 0) | 0 | — | — | 0 | 다음 image 대기 |
 
 **Verification anchors**:
@@ -263,6 +267,8 @@ Cycle 번호: pixel (r, c) HOLD0 cycle = `57 + 72*r + 3*c` for r=0..22; r=23 도
 - **Cycle 1775 edge (cap 첫 발동)**: counter 가 (25, 25) → (25, 25) (변화 없음).
 - **Cycle 1782 win_r2**: [(25, 23), (25, 24), (25, 25)] — 마지막 출력 (23, 23) 의 input col 23/24/25.
 - **Cycle 1784 ADV**: 마지막 PE input. output_pixel_cnt next-edge 값이 576. state next-edge 가 DRAIN.
+- **Cycle 1795 → 1796 edge**: 마지막 c2pool mem[575] 갱신 + `wdone_reg ← 1` 동시 발생.
+- **Cycle 1796 (drain=11)**: `wdone=1` (1-cycle pulse). state next-edge 가 DONE.
 - **Cycle 1797 DONE 진입**: 모든 카운터 reset. 다음 image 의 PIPELINE_FILL 첫 cycle 이 그 image 의 cycle 0.
 
 ### 4.2 Cap 의 정당성 검증
@@ -333,8 +339,9 @@ r=23 의 경우 다음 행 (r=24) 가 존재하지 않으므로 정렬 불필요
 | A6 | 1775 | Cap 첫 발동 | counter (25, 25) edge → 그대로 (25, 25) (no overflow) |
 | A7 | 1782 | 마지막 픽셀 win | win_r2 = [(25, 23), (25, 24), (25, 25)] |
 | A8 | 1784 | 마지막 PE input | output_pixel_cnt next-edge = 576. state next-edge = DRAIN |
-| A9 | 1796 | DRAIN 종료 | drain_cnt = 11. mem 의 마지막 c2pool write 이 이 edge 에 완료 |
-| A10 | 1797 | DONE 진입 | 모든 카운터 reset, 다음 image 대기 |
+| A9 | 1795 | 마지막 c2pool write | drain_cnt=10. `c2pool_we_reg=1`, `write_addr=575`. edge 1795→1796 에 mem[575] 갱신 + `wdone_reg ← 1` |
+| A10 | 1796 | wdone fire | drain_cnt=11. `wdone=1` (1-cycle pulse). edge 1796→1797: state ← DONE |
+| A11 | 1797 | DONE 진입 | 모든 카운터 reset, 다음 image 대기 |
 
 ---
 
@@ -351,4 +358,93 @@ r=23 의 경우 다음 행 (r=24) 가 존재하지 않으므로 정렬 불필요
 | Date | Change |
 |---|---|
 | (TBD, 2026-05-25) | 초안. L=2 fix 가정. DRAIN state 12 cycle. Cap @ (25, 25). r=23 에서 WRAP 미사용. §1.2 의 line buffer 정확 trace 는 open item 으로 남김 (testbench 단계에서 확정). |
+| 2026-05-28 | single-image testbench PASS (compute total 2378 cycle, mismatches 0/576) 와 정합 확인. §4.1 의 마지막 DRAIN 구간을 mem update edge (1795→1796) 와 wdone fire (cycle 1796) 분리하도록 수정 — 기존 `edge 1796→1797 mem 갱신` 표기는 §0.4 / §5 의 lag-12 정의와 1 cycle 어긋남. §7 anchors 도 A9/A10/A11 로 분리. §10 testbench cycle 매핑 추가. |
+
+---
+
+## 10. Testbench cycle 매핑
+
+본 문서의 cycle 0 (= PIPELINE_FILL 첫 cycle, §0.6) 은 control plane 의 자연스러운 기준점이지만, testbench (`TB/single_img/tb_conv2_engine.v`) 가 측정하는 `cycle_cnt` 와는 IDLE / LOAD_WEIGHTS / DONE prelude 만큼 offset 이 존재한다.
+
+### 10.1 Prelude — testbench cycle 1..582
+
+testbench 의 `cycle_cnt` 는 reset 해제 직후 첫 posedge clk 에서 1 로 증가 (reset 해제 시점 = 0, 첫 posedge 후 = 1).
+
+| TB cycle | 사건 | FSM state @ T | 비고 |
+|---|---|---|---|
+| 1 | `start` pulse | IDLE | edge 1→2: state ← LOAD_WEIGHTS, `loader_start ← 1` |
+| 2 | LOAD_WEIGHTS 1st | LOAD_WEIGHTS | weight_loader 는 IDLE → LOADING 한 박자 늦음 |
+| 3 | `prior_wdone` pulse | LOAD_WEIGHTS | edge 3→4: `prior_diff ← −1`. weight_loader: IDLE → LOADING |
+| 4..578 | LOADING addr 1..575 | LOAD_WEIGHTS | 575 cycle (`is_last_addr` @ 578 → 다음 edge 에 DRAIN) |
+| 579 | weight_loader DRAIN | LOAD_WEIGHTS | BMG output reg 마지막 dout 도달 대기 |
+| 580 | weight_loader FINISH | LOAD_WEIGHTS | edge 580→581: `loader_done ← 1` |
+| 581 | weight_loader IDLE, `loader_done=1` | LOAD_WEIGHTS | edge 581→582: state ← DONE |
+| 582 | DONE state | DONE | `ready_to_compute=true` (prior_diff=−1 since cycle 4). edge 582→583: state ← PIPELINE_FILL |
+| **583** | **PIPELINE_FILL 1st (= 본 문서 cycle 0)** | PIPELINE_FILL | counter=(0,0). 이후 본 문서 cycle 번호와 1:1 대응 (offset 583) |
+
+→ **TB cycle = 본 문서 cycle + 583** (해당 prelude 구성에서).
+
+### 10.2 LOAD_WEIGHTS 580 cycle sub-breakdown
+
+| 구간 | TB cycle | 길이 | 비고 |
+|---|---|---|---|
+| FSM in LOAD_WEIGHTS, weight_loader IDLE → LOADING wait | 2 | 1 | `loader_start` latency |
+| weight_loader LOADING (addr 0..575) | 3..578 | 576 | Conv2 weight 개수 (3×3×8×8 oc_pair) |
+| weight_loader DRAIN | 579 | 1 | BMG output reg 마지막 cycle |
+| weight_loader FINISH | 580 | 1 | `loader_done` 다음 edge 에 set |
+| weight_loader IDLE + `loader_done=1` → FSM 가 DONE 으로 전이 | 581 | 1 | edge 581→582 |
+| **합계** | | **580** | |
+
+### 10.3 wdone fire 시점 (datapath, `conv2_engine.v` §14)
+
+```
+wdone_event = c2pool_we_reg && (c2pool_write_addr == 10'd575);
+wdone_reg <= wdone_event;     // 1-cycle 지연
+```
+
+- 본 문서 cycle 1795 (= TB 2378, DRAIN drain_cnt=10): `c2pool_we_reg=1` 마지막 fire, `write_addr=575` → `wdone_event=1`.
+- **edge 1795→1796**: c2pool mem[575] 갱신, `wdone_reg ← 1`.
+- 본 문서 cycle 1796 (= TB 2379, DRAIN drain_cnt=11): **`wdone=1`** (1-cycle pulse).
+- edge 1796→1797: FSM 가 DRAIN → DONE. state=DONE 은 cycle 1797 (= TB 2380) 부터.
+
+→ **wdone fire 와 state=DONE 진입 사이에 1 cycle gap** 존재. handshake 가 wdone pulse 기반이라 무해. FSM 의 DRAIN 12 cycle 길이는 lag-12 pipeline (PE input → mem update) 을 안전하게 cover 하기 위한 설정 (drain=11 cycle 은 wdone propagation 여유; 11 cycle 로 줄여도 mem update 정합 자체에는 영향 없음).
+
+### 10.4 Testbench 측정과 정합
+
+`tb_conv2_engine.v` line 264-272 의 출력 (예: single-image PASS):
+
+```
+start         @ cycle 1
+prior_wdone   @ cycle 3
+wdone         @ cycle 2379
+compute total : 2378 cycles (start → wdone)
+mismatches    : 0 / 576
+```
+
+분해:
+
+| 구간 | TB cycle 범위 | 길이 | 본 문서 cycle |
+|---|---|---|---|
+| IDLE (start asserted) | 1 | 1 | — |
+| LOAD_WEIGHTS | 2..581 | 580 | — |
+| DONE state (1 cycle hold) | 582 | 1 | — |
+| PIPELINE_FILL | 583..639 | 57 | 0..56 |
+| COMPUTE (HOLD/HOLD/ADV + WRAP) | 640..2367 | 1728 | 57..1784 |
+| DRAIN (drain_cnt 0..10, 마지막 c2pool mem 갱신 포함) | 2368..2378 | 11 | 1785..1795 |
+| **wdone fire (drain_cnt=11)** | **2379** | — | **1796** |
+| (state=DONE 진입) | 2380 | — | 1797 |
+
+`compute total = cycle_at_wdone - cycle_at_start = 2379 - 1 = 2378` ✓ (`testbench 표시값과 일치`).
+
+- 1 (IDLE) + 580 (LOAD_WEIGHTS) + 1 (DONE) + 57 (FILL) + 1728 (COMPUTE) + 11 (DRAIN 0..10) = 2378
+- 또는 PIPELINE_FILL 시점 기준: prelude 582 cycle + 본 문서 0..1796 (1797 cycle) = 2379 → `2379 − 1 = 2378` ✓
+
+### 10.5 다른 prelude 구성에서의 매핑
+
+위 매핑은 testbench 가 `prior_wdone` 을 cycle 3 에 pulse 하는 구성 기준. 만약 `prior_wdone` 이 LOAD_WEIGHTS 종료 (TB cycle 581) 이후에 도착한다면, FSM 의 DONE state hold 가 그만큼 길어져 `cycle_at_wdone` 도 비례 증가한다. 즉:
+
+- TB cycle (PIPELINE_FILL 첫 cycle) = max(582, `cycle_at_prior_wdone` + 1) + 1
+- TB cycle (wdone fire) = TB cycle (PIPELINE_FILL 첫 cycle) + 1796
+
+multi-image testbench (`TB/multi_img/tb_conv2_engine_multi.v`) 의 경우 첫 image 는 위 식과 동일하지만, 두 번째 image 부터는 LOAD_WEIGHTS prelude 가 생략되고 (DONE state 에서 `prior_wdone` / `succ_rdone` 만 대기), DONE state hold 길이가 handshake 상황에 따라 달라진다. 각 image 의 compute portion (PIPELINE_FILL → DRAIN 마지막 mem write) 은 항상 1796 cycle (본 문서 cycle 0..1795 inclusive, edge 1795→1796 가 mem 갱신 edge).
 

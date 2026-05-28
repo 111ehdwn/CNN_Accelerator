@@ -125,7 +125,23 @@ weight 범위 [-127, 127] 이면 -128 carry overflow 없음 → 보정 단순.
 
 상세: `conv2_timing_tables.md §4`.
 
-### 4.6 ping-pong + 양방향 handshake
+### 4.6 Adder tree `en` 의 5-cycle window 보장
+
+`krow_ic_adder_tree` 는 5-stage pipeline 이고 **각 stage 가 `en` 으로 게이팅** 된다. 한 image 의 마지막 valid PE 출력이 sum register 까지 도달하려면 `en=1` 이 **5 cycle 연속 유지** 되어야 한다.
+
+```verilog
+// conv2_engine.v
+wire adder_en = pe_en_pipe[3] | pe_en_pipe[4] | pe_en_pipe[5]
+              | pe_en_pipe[6] | pe_en_pipe[7];   // 5-cycle OR window
+```
+
+`pe_en_pipe[3]` 하나만 사용하면 마지막 입력 후 1 cycle 만에 en=0 → s1 에서 데이터가 stuck → sum register freeze → `kcol_accumulator` 가 stale 값을 누적해서 마지막 2 출력 픽셀의 값이 오염된다.
+
+이 bug 는 corner pixel 의 입력이 모두 0 (background) 인 image 에서는 mask 되어 invisible. multi-image 검증 중 image 28 에서 처음 catch 됨. 상세는 **`conv2_adder_drain_bug_fix.md`** 참조.
+
+**일반 원칙**: pipelined 모듈의 `en` 게이팅은 "pipeline depth 만큼의 window" 로 정의. 모든 pipelined 모듈 (adder tree, FIFO, accumulator) 에 동일하게 적용.
+
+### 4.7 ping-pong + 양방향 handshake
 
 Conv1 ↔ Conv2 와 Conv2 ↔ Maxpool 사이 각각 ping-pong buffer (input/output bank 2개). Inter-image pipelining 으로 throughput ↑.
 
@@ -268,6 +284,7 @@ module conv2_engine (
 - **`conv2_timing_tables.md`** — cycle-by-cycle 표 + verification anchors. testbench 검증의 정본.
 - **`conv2_timing.md`** — 상세 timing 분석 + open items + 책임 분리 설명. AI/long-form 용.
 - **`../../CONV2_TIMING_FIX.md`** — c1c2 BRAM L=1 → L=2 fix 의 cycle-by-cycle 증명.
+- **`conv2_adder_drain_bug_fix.md`** — adder_tree `en` window 누락 bug 의 분석 및 수정 (image 28 에서 발견된 마지막 2 픽셀 오염).
 - **`../../docs/DSP48E1_signed8x8_SIMD_Packing.md`** — SIMD packing 알고리즘.
 - **`conv2_engine.v`** — top-level 코드. sub-module 인스턴스화, delay pipeline, c2pool write/handshake 생성.
 - **`conv2_fsm.v`** — FSM 코드. 헤더 주석에 상태 전이 + 카운터 의미 상세.

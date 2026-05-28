@@ -24,7 +24,7 @@
 
 State 약어: FILL=PIPELINE_FILL, HOLD=COMPUTE_HOLD, ADV=COMPUTE_ADVANCE, WRAP=COMPUTE_WRAP, DRAIN, DONE.
 
-Cycle 0 = PIPELINE_FILL 첫 cycle. counter @ 0 = (0, 0). cycle k 의 counter (FILL 동안) = `(k div 26, k mod 26)`.
+Cycle 0 = PIPELINE_FILL 첫 cycle. counter @ 0 = (0, 0). cycle k 의 counter (FILL 동안) = `(k div 26, k mod 26)`. Testbench (`cycle_cnt`, reset 해제 기준) cycle 과의 매핑은 `conv2_timing.md §10` 참조 — single-image 구성 기준 `TB cycle = 본 표 cycle + 583` (prelude: IDLE + LOAD_WEIGHTS 580 + DONE 1 + offset 1).
 
 ---
 
@@ -103,13 +103,19 @@ cycle 126/127/128 (WRAP 3 cycle) 의 PE input = 출력 (0, 23) 의 K_col=0/1/2 c
 | 1785 | DRAIN | DRAIN | (25, 25) → (25, 25) | 0 | d=0  | — | (25, 25) | [(25, 23), (25, 24), (25, 25)] | — | — |
 | 1786 | DRAIN | DRAIN | (25, 25) → (25, 25) | 0 | d=1  | — | (25, 25) | [(25, 23), (25, 24), (25, 25)] | — | — |
 | 1787 | DRAIN | DRAIN | (25, 25) → (25, 25) | 0 | d=2  | — | (25, 25) | hold | — | — |
-| ...  | DRAIN | DRAIN | (25, 25) → (25, 25) | 0 | d=3..10 | — | (25, 25) | hold | — | — |
+| ...  | DRAIN | DRAIN | (25, 25) → (25, 25) | 0 | d=3..9 | — | (25, 25) | hold | — | — |
+| 1795 | DRAIN | DRAIN | (25, 25) → (25, 25) | 0 | d=10 | — | (25, 25) | hold | — | — |
 | 1796 | DRAIN | DONE  | (25, 25) → (0, 0) reset | 0 | d=11 | — | (25, 25) | hold | — | — |
 | 1797 | DONE  | DONE  | (0, 0) → (0, 0) | 0 | — | — | — | reset | — | — |
 
 cycle 1782 의 win_r2 = `[(25, 23), (25, 24), (25, 25)]` → 마지막 출력 (23, 23) 의 col 23/24/25.
 cycle 1784 의 ADV = 마지막 PE input (`output_pixel_cnt == 575` → 다음 edge 에 DRAIN 진입).
-cycle 1796 의 DRAIN 끝 = 마지막 c2pool write 가 edge 1796→1797 에 mem 갱신. DONE 진입 시 모든 카운터 reset.
+cycle 1795 (DRAIN d=10) edge → 1796: 마지막 c2pool mem[575] 갱신 + `wdone_reg ← 1` (lag-12 pipeline; §0 의 pipeline depth 참조).
+cycle 1796 (DRAIN d=11): **`wdone=1`** (1-cycle pulse). edge 1796→1797: state ← DONE + 모든 카운터 reset.
+
+→ wdone fire (cycle 1796) 와 state=DONE 진입 (cycle 1797) 은 1 cycle 차이. handshake 가 wdone pulse 기반이라 무해.
+
+**⚠️ Adder pipeline drain 주의**: DRAIN cycle 1785~1792 동안에도 `adder_en` 은 1 로 유지되어야 마지막 valid PE 출력이 `krow_ic_adder_tree` 5-stage 를 통과해 `sum` register 까지 도달함. 단순히 `adder_en = pe_en_pipe[3]` 으로 4-cycle delay 만 적용하면 cycle 1789 부터 en=0 → 마지막 입력이 s1 에서 stuck → `kcol_accumulator` 가 stale sum 누적 → mem[574], mem[575] 오염. `conv2_engine.v` 는 `adder_en = OR(pe_en_pipe[3..7])` 의 5-cycle window 로 수정 적용됨. 상세: **`conv2_adder_drain_bug_fix.md`**.
 
 ---
 
@@ -125,5 +131,6 @@ cycle 1796 의 DRAIN 끝 = 마지막 c2pool write 가 edge 1796→1797 에 mem �
 | A6 | 1775 | cap 첫 발동 | (25, 25) edge → (25, 25) (no change) |
 | A7 | 1782 | 마지막 출력 (23,23) HOLD0 | win_r2=[(25,23),(25,24),(25,25)] |
 | A8 | 1784 | 마지막 PE input | state=ADV, output_pixel_cnt next-edge=576, state next-edge=DRAIN |
-| A9 | 1796 | DRAIN 끝 | drain_cnt=11, state next-edge=DONE |
-| A10 | 1797 | DONE 진입 | counter (0, 0) reset, 다음 image 대기 |
+| A9 | 1795 | 마지막 c2pool write | drain_cnt=10, `c2pool_we_reg=1`, `write_addr=575`. edge 1795→1796: mem[575] 갱신 + `wdone_reg ← 1` |
+| A10 | 1796 | wdone fire | drain_cnt=11. `wdone=1` (1-cycle pulse). state next-edge = DONE |
+| A11 | 1797 | DONE 진입 | counter (0, 0) reset, 다음 image 대기 |

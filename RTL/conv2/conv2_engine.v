@@ -304,7 +304,12 @@ module conv2_engine (
         end
     end
 
-    wire       adder_en      = pe_en_pipe[3];
+    // adder_tree 는 5-stage pipeline. 마지막 valid PE 출력 (DRAIN 진입 직전) 이
+    // sum register 까지 propagate 하려면 en=1 이 5 cycle 연속 유지되어야 함.
+    // pe_en_pipe[3] 만 사용하면 마지막 입력 후 1 cycle 만에 en=0 → s1 에서 stuck.
+    // → pe_en_pipe[3..7] 5-cycle window OR 로 확장.
+    wire       adder_en      = pe_en_pipe[3] | pe_en_pipe[4] | pe_en_pipe[5]
+                             | pe_en_pipe[6] | pe_en_pipe[7];
     wire       kcol_en       = pe_en_pipe[8];
     wire [1:0] kcol_kw_phase = sel_pipe[8];
 
