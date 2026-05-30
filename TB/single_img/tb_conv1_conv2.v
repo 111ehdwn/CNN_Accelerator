@@ -32,7 +32,7 @@ module tb_conv1_conv2;
 
     //==========================================================================
     // Clock / reset (100 MHz)
-    //   Conv1 = active-low rst_n, Conv2 = active-high rst → 둘 다 동일 시점에 활성/해제
+    //   Conv1/Conv2 모두 active-high rst (= ~rst_n) 사용 (시스템 통일).
     //==========================================================================
     reg clk = 1'b0;
     reg rst_n = 1'b0;
@@ -48,9 +48,7 @@ module tb_conv1_conv2;
     wire         conv2_wdone;
     wire         conv2_rdone;
 
-    // ping-pong bank (single image: 0 고정)
-    wire         input_bank_sel = 1'b0;
-    wire         bank_sel       = 1'b0;
+    // ping-pong bank 은 각 engine 내부 toggle FF (single image → 0 고정).
 
     //==========================================================================
     // BMG signal nets
@@ -132,12 +130,14 @@ module tb_conv1_conv2;
     //==========================================================================
     conv1_engine conv1 (
         .clk          (clk),
-        .rst_n        (rst_n),
+        .rst          (rst),
         .start        (conv1_start),
         .done         (conv1_done),
 
-        .input_bank_sel (input_bank_sel),
-        .bank_sel     (bank_sel),
+        .prior_wdone  (1'b0),       // conv1 은 start 로 트리거 (legacy backup)
+        .succ_rdone   (1'b0),       // single image — tie low
+        .rdone        (),           // 미사용
+        .wdone        (),           // 미사용 (done 으로 완료 감지 → conv2 prior_wdone 수동 pulse)
 
         .in_bram_addr (in_addrb),
         .in_bram_en   (in_enb),

@@ -6,8 +6,8 @@
 //   3 process 병렬 (tb_conv2_engine_multi.v 패턴 차용):
 //     main_process    : reset → init_weight1 → init_weight2 → conv2_start (1회) → wait all_done → report
 //     conv1_process   : per-image input write (bram_input bank (i&1)) →
-//                       toggle conv1.input_bank_sel/bank_sel → conv1_start → wait conv1_done →
-//                       pulse conv2.prior_wdone
+//                       conv1_start → wait conv1_done → pulse conv2.prior_wdone
+//                       (bank 은 conv1 내부 toggle FF 가 관리)
 //     compare_process : @posedge conv2_wdone 마다 c2pool BMG bank (i&1) read + expected 비교 + succ_rdone
 //
 //   5 BMG IP (Vivado 프로젝트에 미리 생성):
@@ -35,7 +35,7 @@ module tb_conv1_conv2_multi;
 
     //==========================================================================
     // Clock / reset (100 MHz)
-    //   Conv1 = active-low rst_n, Conv2 = active-high rst
+    //   Conv1/Conv2 모두 active-high rst (= ~rst_n) 사용 (시스템 통일).
     //==========================================================================
     reg clk = 1'b0;
     reg rst_n = 1'b0;
@@ -51,9 +51,8 @@ module tb_conv1_conv2_multi;
     wire         conv2_wdone;
     wire         conv2_rdone;
 
-    // ping-pong bank (image idx 의 LSB)
-    reg          input_bank_sel = 1'b0;
-    reg          bank_sel       = 1'b0;
+    // ping-pong bank 은 conv1 내부 toggle FF 가 관리 (rdone/wdone count[0]).
+    // TB 의 input write bank (i&1) 과 자동 sync (sequential 처리).
 
     //==========================================================================
     // BMG signals
@@ -139,12 +138,14 @@ module tb_conv1_conv2_multi;
     //==========================================================================
     conv1_engine conv1 (
         .clk          (clk),
-        .rst_n        (rst_n),
+        .rst          (rst),
         .start        (conv1_start),
         .done         (conv1_done),
 
-        .input_bank_sel (input_bank_sel),
-        .bank_sel     (bank_sel),
+        .prior_wdone  (1'b0),         // conv1 은 start 로 트리거 (legacy backup)
+        .succ_rdone   (conv2_rdone),  // conv2 의 c1c2 read 완료 → output bank 여유 (after_diff 관리)
+        .rdone        (),             // 미사용
+        .wdone        (),             // 미사용 (done 으로 완료 감지 → conv2 prior_wdone 수동 pulse)
 
         .in_bram_addr (in_addrb),
         .in_bram_en   (in_enb),
@@ -412,12 +413,8 @@ module tb_conv1_conv2_multi;
             // Backpressure: conv2 가 너무 처지면 대기 (현재 sequential 이라 사실상 무필요)
             wait ((i_conv1 - rdone_count) < 2);
 
-            // Set bank for this image (ping-pong, image LSB)
-            @(negedge clk);
-            input_bank_sel = i_conv1[0];
-            bank_sel       = i_conv1[0];
-
-            // Write input to bram_input bank
+            // bank 은 conv1 내부 toggle FF 가 관리 (rdone/wdone count[0]).
+            // TB 는 input 을 bank (i&1) 에 write → conv1 read bank 와 자동 sync.
             write_input(i_conv1);
 
             // Pulse conv1_start

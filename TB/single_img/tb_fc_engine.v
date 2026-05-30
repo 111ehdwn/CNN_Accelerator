@@ -28,8 +28,10 @@
 //     FCW_HEX     : fc_weights_simd.hex  (11520 line × 32-bit SIMD-packed)
 //////////////////////////////////////////////////////////////////////////////////
 
-`define POOLFC_HEX  "C:/Users/gimdohyeon/PycharmProjects/CNN_Accelerator/data/single_img/maxpool_output.hex"
-`define FCW_HEX     "C:/Users/gimdohyeon/PycharmProjects/CNN_Accelerator/data/weights_simd/fc_weights_simd.hex"
+// 데이터 경로는 다른 TB(tb_conv1_conv2_maxpool_multi 등)와 동일 베이스로 통일.
+//   C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/
+`define POOLFC_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/maxpool_output.hex"
+`define FCW_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/fc_weights_simd.hex"
 
 
 module tb_fc_engine;
