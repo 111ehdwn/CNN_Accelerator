@@ -20,7 +20,7 @@ module conv1_weight_loader #(
     parameter integer ADDR_W = 6
 )(
     input  wire        clk,
-    input  wire        rst,
+    input  wire        rst,                 // active-high (시스템 통일)
 
     input  wire        load_start,
     output reg         load_done,

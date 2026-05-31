@@ -2,40 +2,45 @@
 //////////////////////////////////////////////////////////////////////////////////
 // Module Name: conv1_fsm
 // Description:
-//   - Conv1 전체 제어 FSM
+//   - Conv1 전체 제어 FSM (active-high rst, 4-way handshake 통합)
+//
+//   인터페이스:
+//     - rst              : active-high synchronous reset (시스템 통일)
+//     - start            : legacy system-init pulse (사용 X — prior_wdone 으로 trigger)
+//     - prior_wdone      : 외부에서 image 시작 trigger (입력 image 준비 알림)
+//     - succ_rdone       : 외부에서 다운스트림 read 완료 알림 (Conv2.rdone direct wire)
+//     - rdone            : Conv1 의 input bram read 완료 1-cycle pulse
+//     - wdone            : Conv1 의 c1c2 write 완료 1-cycle pulse → Conv2.prior_wdone
+//
+//   Handshake counter (race-free combinational next-value 패턴):
+//     prior_diff = (rdone count) - (prior_wdone count) ; data_ready = (prior_diff_next < 0)
+//     after_diff = (wdone count) - (succ_rdone count)  ; output_avail = (after_diff_next < 2)
+//     docs/handshake_counter_nba_race.md 참조.
 //
 //   동작 순서:
-//     1. IDLE  : start 대기
+//     1. IDLE  : prior_wdone + output bank 여유 대기
 //     2. LOAD  : weight_loader 완료 대기
-//     3. RUN1  : sel=0, 입력 이미지 28×28 스캔 (oc0~3 계산)
+//     3. RUN1  : sel=0, 28×28 스캔 (oc0~3)
 //     4. FLUSH1: 파이프라인 드레인 6사이클
-//     5. RESET : line_buffer + window_register 리셋 1사이클 (RUN2 준비)
-//     6. RUN2  : sel=1, 입력 이미지 28×28 재스캔 (oc4~7 계산)
+//     5. LBRST : line_buffer + window_register 리셋 1사이클
+//     6. RUN2  : sel=1, 28×28 재스캔 (oc4~7) → 끝 시점 rdone pulse
 //     7. FLUSH2: 파이프라인 드레인 6사이클
-//     8. DONE  : done 펄스 1사이클
-//
-//   버그 수정:
-//     - FLUSH 구간에서 row/col 리셋 → RUN1 마지막 데이터 flush 불가 문제 제거
-//       (FLUSH 구간은 row/col 카운터 멈춤, pipe_en=1 유지)
-//     - RUN2 진입 전 lb_rst=1 1사이클로 line_buffer, window_register 클리어
-//       (RUN1 데이터 오염 방지)
-//     - in_addr 재사용: RUN2 시 0부터 재스캔 가능하도록 engine 측에서
-//       lb_rst와 연동하여 in_addr 리셋
+//     8. DONE  : done + wdone pulse 1사이클
 //
 //   파이프라인 딜레이:
-//     pe_cell:        4사이클 (DSP 3 + 출력 레지스터 1)
-//     adder_tree:     1사이클
-//     truncate_relu:  1사이클
-//     총:             6사이클
-//
-//   pixel_valid 조건:
-//     row >= 2 && col >= 2 (28×28 입력, 3×3 커널, 패딩 없음)
+//     pe_cell:       4, adder_tree: 1, truncate_relu: 1 → 총 6
 //////////////////////////////////////////////////////////////////////////////////
 
 module conv1_fsm (
     input  wire        clk,
-    input  wire        rst_n,
-    input  wire        start,
+    input  wire        rst,                  // active-high synchronous
+    input  wire        start,                // legacy system init (사용 X)
+
+    // 4-way handshake
+    input  wire        prior_wdone,
+    input  wire        succ_rdone,
+    output reg         rdone,
+    output reg         wdone,
 
     // weight_loader 인터페이스
     output reg         load_start,
@@ -48,16 +53,13 @@ module conv1_fsm (
     // line_buffer / window_register 리셋 (RUN2 진입 전 클리어)
     output reg         lb_rst,
 
-    // pixel_valid: 유효 window (row>=2, col>=2)
-    output wire        pixel_valid,
-
     // 파이프라인 딜레이 보상 후 출력 주소
     output wire [4:0]  out_row,
     output wire [4:0]  out_col,
     output wire        out_valid,
     output wire        out_sel,
 
-    output reg         done
+    output reg         done                  // legacy (debug)
 );
 
     //==========================================================================
@@ -67,7 +69,7 @@ module conv1_fsm (
     localparam LOAD   = 4'd1;
     localparam RUN1   = 4'd2;
     localparam FLUSH1 = 4'd3;
-    localparam LBRST  = 4'd4;   // ★ 추가: lb/win 리셋 1사이클
+    localparam LBRST  = 4'd4;
     localparam RUN2   = 4'd5;
     localparam FLUSH2 = 4'd6;
     localparam DONE   = 4'd7;
@@ -88,15 +90,13 @@ module conv1_fsm (
     wire run_state = (state == RUN1) || (state == RUN2);
 
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst) begin
             row <= 5'd0;
             col <= 5'd0;
         end else if (state == FLUSH1 || state == FLUSH2) begin
-            // flush: 카운터 정지 (마지막 위치 유지, 필요 없으니 0으로)
             row <= 5'd0;
             col <= 5'd0;
         end else if (state == LBRST) begin
-            // lb_rst 사이클: 카운터 0 유지
             row <= 5'd0;
             col <= 5'd0;
         end else if (run_state) begin
@@ -116,9 +116,9 @@ module conv1_fsm (
     end
 
     //==========================================================================
-    // pixel_valid
+    // pixel_valid: 유효 window (row>=2, col>=2). FSM 내부에서만 사용.
     //==========================================================================
-    assign pixel_valid = run_state && (row >= 5'd2) && (col >= 5'd2);
+    wire pixel_valid = run_state && (row >= 5'd2) && (col >= 5'd2);
 
     //==========================================================================
     // flush 카운터
@@ -126,28 +126,74 @@ module conv1_fsm (
     reg [2:0] flush_cnt;
 
     //==========================================================================
+    // Handshake counters (race-free combinational next value)
+    //==========================================================================
+    reg signed [2:0] prior_diff;
+    reg signed [2:0] after_diff;
+    reg signed [2:0] prior_diff_next;
+    reg signed [2:0] after_diff_next;
+
+    always @(*) begin
+        case ({rdone, prior_wdone})
+            2'b10:   prior_diff_next = prior_diff + 3'sd1;
+            2'b01:   prior_diff_next = prior_diff - 3'sd1;
+            default: prior_diff_next = prior_diff;
+        endcase
+        case ({wdone, succ_rdone})
+            2'b10:   after_diff_next = after_diff + 3'sd1;
+            2'b01:   after_diff_next = after_diff - 3'sd1;
+            default: after_diff_next = after_diff;
+        endcase
+    end
+
+    wire data_ready   = (prior_diff_next < 3'sd0);
+    wire output_avail = (after_diff_next < 3'sd2);
+
+    // start edge-detect (legacy)
+    reg start_d;
+    wire start_pulse = start & ~start_d;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            prior_diff <= 3'sd0;
+            after_diff <= 3'sd0;
+            start_d    <= 1'b0;
+        end else begin
+            prior_diff <= prior_diff_next;
+            after_diff <= after_diff_next;
+            start_d    <= start;
+        end
+    end
+
+    //==========================================================================
     // FSM
     //==========================================================================
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst) begin
             state      <= IDLE;
             load_start <= 1'b0;
             pipe_en    <= 1'b0;
             sel        <= 1'b0;
             lb_rst     <= 1'b0;
             done       <= 1'b0;
+            rdone      <= 1'b0;
+            wdone      <= 1'b0;
             flush_cnt  <= 3'd0;
         end else begin
+            // default deasserts
             load_start <= 1'b0;
             done       <= 1'b0;
             lb_rst     <= 1'b0;
+            rdone      <= 1'b0;
+            wdone      <= 1'b0;
 
             case (state)
                 //--------------------------------------------------------------
                 IDLE: begin
                     pipe_en <= 1'b0;
                     sel     <= 1'b0;
-                    if (start) begin
+                    // RUN 진입 조건: 입력 image 준비 + 출력 bank 여유
+                    if ((data_ready && output_avail) || start_pulse) begin
                         load_start <= 1'b1;
                         state      <= LOAD;
                     end
@@ -175,8 +221,6 @@ module conv1_fsm (
 
                 //--------------------------------------------------------------
                 FLUSH1: begin
-                    // pipe_en=1 유지하여 마지막 픽셀이 파이프라인 끝까지 흐르게 함
-                    // row/col은 이미 0으로 리셋됨 → 스캔 카운터 영향 없음
                     pipe_en <= 1'b1;
                     sel     <= 1'b0;
                     if (flush_cnt == PIPE_DELAY-1) begin
@@ -189,11 +233,9 @@ module conv1_fsm (
                 end
 
                 //--------------------------------------------------------------
-                // ★ LBRST: line_buffer, window_register 리셋 1사이클
-                //    pipe_en=0 상태에서 lb_rst=1 → 다음 사이클에 RUN2 진입
                 LBRST: begin
                     pipe_en <= 1'b0;
-                    lb_rst  <= 1'b1;   // 1사이클 펄스
+                    lb_rst  <= 1'b1;
                     sel     <= 1'b1;
                     state   <= RUN2;
                 end
@@ -205,6 +247,7 @@ module conv1_fsm (
                     if (scan_done) begin
                         flush_cnt <= 3'd0;
                         state     <= FLUSH2;
+                        rdone     <= 1'b1;        // ★ input read 완료 알림
                     end
                 end
 
@@ -224,6 +267,7 @@ module conv1_fsm (
                 //--------------------------------------------------------------
                 DONE: begin
                     done  <= 1'b1;
+                    wdone <= 1'b1;                // ★ c1c2 write 완료 알림
                     state <= IDLE;
                 end
 
@@ -234,7 +278,6 @@ module conv1_fsm (
 
     //==========================================================================
     // 출력 주소 파이프라인 지연 (PIPE_DELAY 사이클)
-    // pixel_valid, row-2, col-2, sel을 동시에 지연
     //==========================================================================
     reg        valid_sr [0:PIPE_DELAY-1];
     reg [4:0]  row_sr   [0:PIPE_DELAY-1];
@@ -243,7 +286,7 @@ module conv1_fsm (
 
     integer i;
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (rst) begin
             for (i = 0; i < PIPE_DELAY; i = i + 1) begin
                 valid_sr[i] <= 1'b0;
                 row_sr[i]   <= 5'd0;
