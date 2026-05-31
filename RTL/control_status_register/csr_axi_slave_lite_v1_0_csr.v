@@ -1,6 +1,27 @@
 
 `timescale 1 ns / 1 ps
 
+//////////////////////////////////////////////////////////////////////////////////
+// csr_axi_slave_lite_v1_0_csr — CNN Accelerator 제어/상태 레지스터 (AXI4-Lite slave)
+//
+//   Register map (C_S_AXI_ADDR_WIDTH=4 → 4 word):
+//     0x00 CTRL  (R/W) : [0] enable    (level)
+//                        [1] start     (write-1 → 1-cycle pulse, auto-clear)
+//                        [2] img_ready (write-1 → 1-cycle pulse, auto-clear)
+//     0x04 STATUS (R)  : [0]    done       (img_cnt==10000 latch)
+//                        [4:1]  result     (마지막 image 분류 결과, img_done 시 latch)
+//                        [5]    can_load   (적재가능: 발행-consumed < 2)
+//                        [19:6] img_cnt    (14-bit, 처리 완료 image 수)
+//     0x08 TIMER_LO (R): timer[31:0]
+//     0x0C TIMER_HI (R): {16'b0, timer[47:32]}
+//
+//   PL(cnn_accelerator) 인터페이스:
+//     out : enable, start, img_ready
+//     in  : result[3:0], img_done, input_consumed
+//
+//   reset_n 은 외부 보드 버튼 (S_AXI_ARESETN 과 별개로 PL 에 직결 — 본 CSR 미관여).
+//////////////////////////////////////////////////////////////////////////////////
+
 	module csr_axi_slave_lite_v1_0_csr #
 	(
 		// Users to add parameters here
@@ -14,10 +35,13 @@
 		parameter integer C_S_AXI_ADDR_WIDTH	= 4
 	)
 	(
-		// Users to add ports here
-
-		// User ports ends
-		// Do not modify the ports beyond this line
+		// ===== PL (cnn_accelerator) 인터페이스 =====
+		output wire        enable,
+		output wire        start,
+		output wire        img_ready,
+		input  wire [3:0]  result,
+		input  wire        img_done,
+		input  wire        input_consumed,
 
 		// Global Clock Signal
 		input wire  S_AXI_ACLK,
@@ -99,18 +123,14 @@
 	// ADDR_LSB = 3 for 64 bits (n downto 3)
 	localparam integer ADDR_LSB = (C_S_AXI_DATA_WIDTH/32) + 1;
 	localparam integer OPT_MEM_ADDR_BITS = 1;
-	//----------------------------------------------
-	//-- Signals for user logic register space example
-	//------------------------------------------------
-	//-- Number of Slave Registers 4
-	reg [C_S_AXI_DATA_WIDTH-1:0]	slv_reg0;
-	reg [C_S_AXI_DATA_WIDTH-1:0]	slv_reg1;
-	reg [C_S_AXI_DATA_WIDTH-1:0]	slv_reg2;
-	reg [C_S_AXI_DATA_WIDTH-1:0]	slv_reg3;
-	integer	 byte_index;
+
+	// Register select index
+	localparam [1:0] REG_CTRL = 2'h0,
+	                 REG_STAT = 2'h1,
+	                 REG_TLO  = 2'h2,
+	                 REG_THI  = 2'h3;
 
 	// I/O Connections assignments
-
 	assign S_AXI_AWREADY	= axi_awready;
 	assign S_AXI_WREADY	= axi_wready;
 	assign S_AXI_BRESP	= axi_bresp;
@@ -118,13 +138,15 @@
 	assign S_AXI_ARREADY	= axi_arready;
 	assign S_AXI_RRESP	= axi_rresp;
 	assign S_AXI_RVALID	= axi_rvalid;
-	 //state machine varibles
-	 reg [1:0] state_write;
-	 reg [1:0] state_read;
-	 //State machine local parameters
-	 localparam Idle = 2'b00,Raddr = 2'b10,Rdata = 2'b11 ,Waddr = 2'b10,Wdata = 2'b11;
-	// Implement Write state machine
-	// Outstanding write transactions are not supported by the slave i.e., master should assert bready to receive response on or before it starts sending the new transaction
+
+	//state machine variables
+	reg [1:0] state_write;
+	reg [1:0] state_read;
+	localparam Idle = 2'b00, Raddr = 2'b10, Rdata = 2'b11, Waddr = 2'b10, Wdata = 2'b11;
+
+	// ============================================================================
+	// AXI Write 채널 FSM (제공 베이스 유지)
+	// ============================================================================
 	always @(posedge S_AXI_ACLK)
 	  begin
 	     if (S_AXI_ARESETN == 1'b0)
@@ -149,7 +171,7 @@
 	                 end
 	               else state_write <= state_write;
 	             end
-	           Waddr:        //At this state, slave is ready to receive address along with corresponding control signals and first data packet. Response valid is also handled at this state
+	           Waddr:
 	             begin
 	               if (S_AXI_AWVALID && S_AXI_AWREADY)
 	                  begin
@@ -173,7 +195,7 @@
 	                    if (S_AXI_BREADY && axi_bvalid) axi_bvalid <= 1'b0;
 	                   end
 	             end
-	          Wdata:        //At this state, slave is ready to receive the data packets until the number of transfers is equal to burst length
+	          Wdata:
 	             begin
 	               if (S_AXI_WVALID)
 	                 begin
@@ -191,118 +213,157 @@
 	        end
 	      end
 
-	// Implement memory mapped register select and write logic generation
-	// The write data is accepted and written to memory mapped registers when
-	// axi_awready, S_AXI_WVALID, axi_wready and S_AXI_WVALID are asserted. Write strobes are used to
-	// select byte enables of slave registers while writing.
-	// These registers are cleared when reset (active low) is applied.
-	// Slave register write enable is asserted when valid address and data are available
-	// and the slave is ready to accept the write address and write data.
+	// ============================================================================
+	// Write address index (현재 write 가 가리키는 register)
+	// ============================================================================
+	wire [OPT_MEM_ADDR_BITS:0] wr_index =
+	       (S_AXI_AWVALID) ? S_AXI_AWADDR[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB]
+	                       : axi_awaddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB];
+	wire wr_en = S_AXI_WVALID;
 
+	// ============================================================================
+	// CTRL register : enable(level), start/img_ready(1-cycle pulse)
+	// ============================================================================
+	reg ctrl_enable;
+	reg ctrl_start;
+	reg ctrl_img_ready;
 
-	always @( posedge S_AXI_ACLK )
-	begin
-	  if ( S_AXI_ARESETN == 1'b0 )
-	    begin
-	      slv_reg0 <= 0;
-	      slv_reg1 <= 0;
-	      slv_reg2 <= 0;
-	      slv_reg3 <= 0;
+	always @(posedge S_AXI_ACLK) begin
+	    if (!S_AXI_ARESETN) begin
+	        ctrl_enable    <= 1'b0;
+	        ctrl_start     <= 1'b0;
+	        ctrl_img_ready <= 1'b0;
+	    end else begin
+	        // start / img_ready 는 매 cycle 0 으로 떨어뜨려 1-cycle pulse 보장
+	        ctrl_start     <= 1'b0;
+	        ctrl_img_ready <= 1'b0;
+	        if (wr_en && (wr_index == REG_CTRL)) begin
+	            ctrl_enable    <= S_AXI_WDATA[0];   // level
+	            ctrl_start     <= S_AXI_WDATA[1];   // pulse
+	            ctrl_img_ready <= S_AXI_WDATA[2];   // pulse
+	        end
 	    end
-	  else begin
-	    if (S_AXI_WVALID)
-	      begin
-	        case ( (S_AXI_AWVALID) ? S_AXI_AWADDR[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] : axi_awaddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] )
-	          2'h0:
-	            for ( byte_index = 0; byte_index <= (C_S_AXI_DATA_WIDTH/8)-1; byte_index = byte_index+1 )
-	              if ( S_AXI_WSTRB[byte_index] == 1 ) begin
-	                // Respective byte enables are asserted as per write strobes
-	                // Slave register 0
-	                slv_reg0[(byte_index*8) +: 8] <= S_AXI_WDATA[(byte_index*8) +: 8];
-	              end
-	          2'h1:
-	            for ( byte_index = 0; byte_index <= (C_S_AXI_DATA_WIDTH/8)-1; byte_index = byte_index+1 )
-	              if ( S_AXI_WSTRB[byte_index] == 1 ) begin
-	                // Respective byte enables are asserted as per write strobes
-	                // Slave register 1
-	                slv_reg1[(byte_index*8) +: 8] <= S_AXI_WDATA[(byte_index*8) +: 8];
-	              end
-	          2'h2:
-	            for ( byte_index = 0; byte_index <= (C_S_AXI_DATA_WIDTH/8)-1; byte_index = byte_index+1 )
-	              if ( S_AXI_WSTRB[byte_index] == 1 ) begin
-	                // Respective byte enables are asserted as per write strobes
-	                // Slave register 2
-	                slv_reg2[(byte_index*8) +: 8] <= S_AXI_WDATA[(byte_index*8) +: 8];
-	              end
-	          2'h3:
-	            for ( byte_index = 0; byte_index <= (C_S_AXI_DATA_WIDTH/8)-1; byte_index = byte_index+1 )
-	              if ( S_AXI_WSTRB[byte_index] == 1 ) begin
-	                // Respective byte enables are asserted as per write strobes
-	                // Slave register 3
-	                slv_reg3[(byte_index*8) +: 8] <= S_AXI_WDATA[(byte_index*8) +: 8];
-	              end
-	          default : begin
-	                      slv_reg0 <= slv_reg0;
-	                      slv_reg1 <= slv_reg1;
-	                      slv_reg2 <= slv_reg2;
-	                      slv_reg3 <= slv_reg3;
-	                    end
-	        endcase
-	      end
-	  end
 	end
 
-	// Implement read state machine
-	  always @(posedge S_AXI_ACLK)
-	    begin
-	      if (S_AXI_ARESETN == 1'b0)
-	        begin
-	         //asserting initial values to all 0's during reset
+	assign enable    = ctrl_enable;
+	assign start     = ctrl_start;
+	assign img_ready = ctrl_img_ready;
+
+	// ============================================================================
+	// Status counters / latch
+	// ============================================================================
+	// img_cnt : img_done 누적 (0~10000)
+	reg [13:0] img_cnt;
+	always @(posedge S_AXI_ACLK) begin
+	    if (!S_AXI_ARESETN)       img_cnt <= 14'd0;
+	    else if (img_done && img_cnt < 14'd10000)
+	                              img_cnt <= img_cnt + 14'd1;
+	end
+
+	// done : img_cnt == 10000 latch
+	reg done_latch;
+	always @(posedge S_AXI_ACLK) begin
+	    if (!S_AXI_ARESETN)            done_latch <= 1'b0;
+	    else if (img_cnt == 14'd10000) done_latch <= 1'b1;
+	end
+
+	// result : img_done 시 latch
+	reg [3:0] result_latch;
+	always @(posedge S_AXI_ACLK) begin
+	    if (!S_AXI_ARESETN) result_latch <= 4'd0;
+	    else if (img_done)  result_latch <= result;
+	end
+
+	// can_load : (img_ready 발행 - input_consumed) < 2  (input BRAM 2-bank backpressure)
+	reg [2:0] inflight;   // 적재했지만 conv1 read 전인 image 수
+	always @(posedge S_AXI_ACLK) begin
+	    if (!S_AXI_ARESETN) inflight <= 3'd0;
+	    else begin
+	        case ({ctrl_img_ready, input_consumed})
+	            2'b10:   inflight <= inflight + 3'd1;
+	            2'b01:   inflight <= (inflight == 0) ? 3'd0 : inflight - 3'd1;
+	            default: inflight <= inflight;   // 2'b11 / 2'b00 : 유지
+	        endcase
+	    end
+	end
+	wire can_load = (inflight < 3'd2);
+
+	// timer : 첫 start pulse 부터 done 까지 free-running 48-bit
+	reg [47:0] timer;
+	reg        timer_run;
+	always @(posedge S_AXI_ACLK) begin
+	    if (!S_AXI_ARESETN) begin
+	        timer     <= 48'd0;
+	        timer_run <= 1'b0;
+	    end else begin
+	        if (ctrl_start) timer_run <= 1'b1;          // 첫 start 에 가동
+	        if (timer_run && !done_latch)
+	            timer <= timer + 48'd1;
+	    end
+	end
+
+	// ============================================================================
+	// AXI Read 채널 FSM (제공 베이스 유지)
+	// ============================================================================
+	always @(posedge S_AXI_ACLK)
+	  begin
+	    if (S_AXI_ARESETN == 1'b0)
+	      begin
 	         axi_arready <= 1'b0;
 	         axi_rvalid <= 1'b0;
 	         axi_rresp <= 1'b0;
 	         state_read <= Idle;
+	      end
+	    else
+	      begin
+	        case(state_read)
+	          Idle:
+	            begin
+	              if (S_AXI_ARESETN == 1'b1)
+	                begin
+	                  state_read <= Raddr;
+	                  axi_arready <= 1'b1;
+	                end
+	              else state_read <= state_read;
+	            end
+	          Raddr:
+	            begin
+	              if (S_AXI_ARVALID && S_AXI_ARREADY)
+	                begin
+	                  state_read <= Rdata;
+	                  axi_araddr <= S_AXI_ARADDR;
+	                  axi_rvalid <= 1'b1;
+	                  axi_arready <= 1'b0;
+	                end
+	              else state_read <= state_read;
+	            end
+	          Rdata:
+	            begin
+	              if (S_AXI_RVALID && S_AXI_RREADY)
+	                begin
+	                  axi_rvalid <= 1'b0;
+	                  axi_arready <= 1'b1;
+	                  state_read <= Raddr;
+	                end
+	              else state_read <= state_read;
+	            end
+	         endcase
 	        end
-	      else
-	        begin
-	          case(state_read)
-	            Idle:     //Initial state inidicating reset is done and ready to receive read/write transactions
-	              begin
-	                if (S_AXI_ARESETN == 1'b1)
-	                  begin
-	                    state_read <= Raddr;
-	                    axi_arready <= 1'b1;
-	                  end
-	                else state_read <= state_read;
-	              end
-	            Raddr:        //At this state, slave is ready to receive address along with corresponding control signals
-	              begin
-	                if (S_AXI_ARVALID && S_AXI_ARREADY)
-	                  begin
-	                    state_read <= Rdata;
-	                    axi_araddr <= S_AXI_ARADDR;
-	                    axi_rvalid <= 1'b1;
-	                    axi_arready <= 1'b0;
-	                  end
-	                else state_read <= state_read;
-	              end
-	            Rdata:        //At this state, slave is ready to send the data packets until the number of transfers is equal to burst length
-	              begin
-	                if (S_AXI_RVALID && S_AXI_RREADY)
-	                  begin
-	                    axi_rvalid <= 1'b0;
-	                    axi_arready <= 1'b1;
-	                    state_read <= Raddr;
-	                  end
-	                else state_read <= state_read;
-	              end
-	           endcase
-	          end
-	        end
-	// Implement memory mapped register select and read logic generation
-	  assign S_AXI_RDATA = (axi_araddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] == 2'h0) ? slv_reg0 : (axi_araddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] == 2'h1) ? slv_reg1 : (axi_araddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] == 2'h2) ? slv_reg2 : (axi_araddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] == 2'h3) ? slv_reg3 :0;
-	// Add user logic here
+	      end
 
-	// User logic ends
+	// ============================================================================
+	// Read data mux
+	// ============================================================================
+	wire [OPT_MEM_ADDR_BITS:0] rd_index =
+	       axi_araddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB];
+
+	wire [31:0] ctrl_rb = {29'd0, ctrl_img_ready, ctrl_start, ctrl_enable};
+	wire [31:0] status  = {12'd0, img_cnt, can_load, result_latch, done_latch};
+
+	assign S_AXI_RDATA =
+	       (rd_index == REG_CTRL) ? ctrl_rb                       :
+	       (rd_index == REG_STAT) ? status                        :
+	       (rd_index == REG_TLO ) ? timer[31:0]                   :
+	       (rd_index == REG_THI ) ? {16'd0, timer[47:32]}         : 32'd0;
 
 	endmodule

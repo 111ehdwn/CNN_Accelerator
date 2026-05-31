@@ -74,7 +74,7 @@ module tb_system_axi_multi;
     //==========================================================================
     // DUTs : CSR + cnn_accelerator
     //==========================================================================
-    csr_slave_lite_v1_0_CSR_AXI csr (
+    csr_axi_slave_lite_v1_0_csr csr (
         .enable(enable), .start(start), .img_ready(img_ready),
         .result(result), .img_done(img_done), .input_consumed(input_consumed),
 
