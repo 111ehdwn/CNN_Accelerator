@@ -38,10 +38,12 @@ module conv1_engine (
     output wire              in_bram_en,
     input  wire signed [7:0] in_bram_dout,
 
-    // Weight BRAM (Read, Port B of conv1_weight_bram)
-    output wire [5:0]  w_bram_addr,
-    output wire        w_bram_en,
-    input  wire [31:0] w_bram_dout,
+    // Conv1 weight BRAM Port A (PS write via AXI BRAM Ctrl)
+    //   conv2 와 일관: weight BRAM 을 engine 내부에 인스턴스화하고 Port A 만 노출.
+    input  wire        c1w_ena,
+    input  wire [3:0]  c1w_wea,             // byte-write (AXI WSTRB[3:0])
+    input  wire [5:0]  c1w_addra,
+    input  wire [31:0] c1w_dina,
 
     // c1c2 BMG Port A (Write, byte-write enable, 64-bit)
     //   Round 0 (sel=0): ch0..3 (= oc0..3) → byte 0..3, wea = 8'b00001111
@@ -158,11 +160,33 @@ module conv1_engine (
     assign in_bram_en   = pipe_en;
 
     //==========================================================================
-    // 3. weight_loader
+    // 3. weight BRAM (engine 내부 인스턴스 — conv2 와 일관) + weight_loader
     //==========================================================================
     wire [24:0]  pe_packed_w;
     wire [17:0]  pe_load_en;
     wire         pe_load_idx;
+
+    // weight_loader ↔ conv1_weight_bram Port B (내부 결선)
+    wire [5:0]  w_bram_addr;
+    wire        w_bram_en;
+    wire [31:0] w_bram_dout;
+
+    // Conv1 weight BMG (Vivado Block Memory Generator IP — conv1_engine 내부 인스턴스, conv2/fc 와 일관)
+    //   Port A: PS write (c1w_ena/addra/dina), Port B: weight_loader read (L=2, regceb).
+    //   ★ ENA=c1w_ena, WEA=c1w_wea[3:0] byte-write (AXI WSTRB 직결).
+    conv1_weight_bram c1w_bmg_inst (
+        .clka  (clk),
+        .ena   (c1w_ena),
+        .wea   (c1w_wea),
+        .addra (c1w_addra),
+        .dina  (c1w_dina),
+
+        .clkb  (clk),
+        .enb   (w_bram_en),
+        .addrb (w_bram_addr),
+        .doutb (w_bram_dout),
+        .regceb(1'b1)
+    );
 
     conv1_weight_loader #(.NUM_PE(18), .ADDR_W(6)) wloader (
         .clk         (clk),

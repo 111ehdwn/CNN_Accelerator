@@ -30,8 +30,13 @@
 
 // 데이터 경로는 다른 TB(tb_conv1_conv2_maxpool_multi 등)와 동일 베이스로 통일.
 //   C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/
-`define POOLFC_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/maxpool_output.hex"
-`define FCW_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/fc_weights_simd.hex"
+`ifdef __ICARUS__
+  `define POOLFC_HEX  "data/single_img/maxpool_output.hex"
+  `define FCW_HEX     "data/weights_simd/fc_weights_simd.hex"
+`else
+  `define POOLFC_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/maxpool_output.hex"
+  `define FCW_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/fc_weights_simd.hex"
+`endif
 
 
 module tb_fc_engine;
@@ -74,8 +79,9 @@ module tb_fc_engine;
 
     // Weight BMG Port A (TB 가 PS-style sequential write)
     reg          fcw_ena      = 1'b0;
-    reg  [9:0]   fcw_addra    = 10'd0;
-    reg  [255:0] fcw_dina     = 256'd0;
+    reg  [3:0]   fcw_wea      = 4'd0;
+    reg  [12:0]  fcw_addra    = 13'd0;
+    reg  [31:0]  fcw_dina     = 32'd0;
 
     // poolfc (TB-local behavioral mem)
     wire         poolfc_re;
@@ -91,6 +97,7 @@ module tb_fc_engine;
         .start       (start),
 
         .fcw_ena     (fcw_ena),
+        .fcw_wea     (fcw_wea),
         .fcw_addra   (fcw_addra),
         .fcw_dina    (fcw_dina),
 
@@ -160,11 +167,12 @@ module tb_fc_engine;
     reg [31:0] weight_simd_mem [0:11519];
 
     task load_weights;
-        integer pair, s, c, line_idx;
+        integer pair, s, c, k, line_idx;
         reg signed [7:0]  w0, w1;
         reg signed [16:0] w0_packed_17;
         reg signed [7:0]  w1_packed_8;
         reg [127:0]       w_even_concat, w_odd_concat;
+        reg [255:0]       word;
         begin
             $readmemh(`FCW_HEX, weight_simd_mem);
             $display("[TB] %s loaded (%0d entries)", `FCW_HEX, 11520);
@@ -182,16 +190,21 @@ module tb_fc_engine;
                         w_even_concat[c*8 +: 8] = w0;
                         w_odd_concat [c*8 +: 8] = w1;
                     end
-                    @(negedge clk);
-                    fcw_ena   = 1'b1;
-                    fcw_addra = pair * 144 + s;
-                    fcw_dina  = {w_odd_concat, w_even_concat};
+                    word = {w_odd_concat, w_even_concat};
+                    for (k = 0; k < 8; k = k + 1) begin
+                        @(negedge clk);
+                        fcw_ena   = 1'b1;
+                        fcw_wea   = 4'hF;
+                        fcw_addra = (pair*144 + s)*8 + k;
+                        fcw_dina  = word[k*32 +: 32];
+                    end
                 end
             end
             @(negedge clk);
             fcw_ena   = 1'b0;
-            fcw_addra = 10'd0;
-            fcw_dina  = 256'd0;
+            fcw_wea   = 4'd0;
+            fcw_addra = 13'd0;
+            fcw_dina  = 32'd0;
             $display("[TB] Weight BRAM write done (720 entries)");
         end
     endtask
@@ -381,31 +394,39 @@ endmodule
 //   ★ Vivado 프로젝트에 실제 fc_weight_bram BMG IP 가 있으면 이 module 을
 //     주석 처리하거나 다른 파일로 분리하세요 (duplicate 정의 충돌 방지).
 //==============================================================================
-module fc_weight_bram (
+module fc_weight_bram (   // ASYMMETRIC: Port A 32b write (×5760) / Port B 256b read (×720)
     input  wire         clka,
     input  wire         ena,
-    input  wire         wea,
-    input  wire [9:0]   addra,
-    input  wire [255:0] dina,
+    input  wire [3:0]   wea,                // byte-write (AXI WSTRB 직결)
+    input  wire [12:0]  addra,
+    input  wire [31:0]  dina,
 
     input  wire         clkb,
     input  wire         enb,
     input  wire [9:0]   addrb,
     output reg  [255:0] doutb
 );
-    reg [255:0] mem [0:1023];
+    reg [31:0] mem [0:5759];   // 5760 = 720 × (256/32)
 
-    integer mi;
+    integer mi, k;
     initial begin
-        for (mi = 0; mi < 1024; mi = mi + 1) mem[mi] = 256'd0;
+        for (mi = 0; mi < 5760; mi = mi + 1) mem[mi] = 32'd0;
         doutb = 256'd0;
     end
 
     always @(posedge clka) begin
-        if (ena && wea) mem[addra] <= dina;
+        if (ena) begin
+            if (wea[0]) mem[addra][ 7: 0] <= dina[ 7: 0];
+            if (wea[1]) mem[addra][15: 8] <= dina[15: 8];
+            if (wea[2]) mem[addra][23:16] <= dina[23:16];
+            if (wea[3]) mem[addra][31:24] <= dina[31:24];
+        end
     end
 
+    // 256b read = 8 × 32b, LSB-first
     always @(posedge clkb) begin
-        if (enb) doutb <= mem[addrb];
+        if (enb)
+            for (k = 0; k < 8; k = k + 1)
+                doutb[k*32 +: 32] <= mem[addrb*8 + k];
     end
 endmodule

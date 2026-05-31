@@ -59,22 +59,24 @@ module tb_cnn_accelerator_multi;
     // PS-write BMG Port A
     //==========================================================================
     reg         in_ena   = 1'b0;
-    reg         in_wea   = 1'b0;
+    reg  [3:0]  in_wea   = 4'd0;          // byte-write (AXI WSTRB)
     reg  [8:0]  in_addra = 9'd0;
     reg  [31:0] in_dina  = 32'd0;
 
-    reg         w1_ena   = 1'b0;
-    reg         w1_wea   = 1'b0;
-    reg  [5:0]  w1_addra = 6'd0;
-    reg  [31:0] w1_dina  = 32'd0;
+    reg         c1w_ena   = 1'b0;
+    reg  [3:0]  c1w_wea   = 4'd0;         // byte-write (AXI WSTRB)
+    reg  [5:0]  c1w_addra = 6'd0;
+    reg  [31:0] c1w_dina  = 32'd0;
 
     reg         c2w_ena   = 1'b0;
+    reg  [3:0]  c2w_wea   = 4'd0;         // byte-write (AXI WSTRB)
     reg  [9:0]  c2w_addra = 10'd0;
     reg  [31:0] c2w_dina  = 32'd0;
 
     reg         fcw_ena   = 1'b0;
-    reg  [9:0]  fcw_addra = 10'd0;
-    reg  [255:0] fcw_dina = 256'd0;
+    reg  [3:0]  fcw_wea   = 4'd0;         // byte-write (AXI WSTRB)
+    reg  [12:0] fcw_addra = 13'd0;
+    reg  [31:0] fcw_dina  = 32'd0;
 
     //==========================================================================
     // DUT
@@ -90,9 +92,9 @@ module tb_cnn_accelerator_multi;
         .input_consumed (input_consumed),
 
         .in_ena (in_ena), .in_wea (in_wea), .in_addra (in_addra), .in_dina (in_dina),
-        .w1_ena (w1_ena), .w1_wea (w1_wea), .w1_addra (w1_addra), .w1_dina (w1_dina),
-        .c2w_ena(c2w_ena), .c2w_addra(c2w_addra), .c2w_dina(c2w_dina),
-        .fcw_ena(fcw_ena), .fcw_addra(fcw_addra), .fcw_dina(fcw_dina)
+        .c1w_ena (c1w_ena), .c1w_wea (c1w_wea), .c1w_addra (c1w_addra), .c1w_dina (c1w_dina),
+        .c2w_ena(c2w_ena), .c2w_wea(c2w_wea), .c2w_addra(c2w_addra), .c2w_dina(c2w_dina),
+        .fcw_ena(fcw_ena), .fcw_wea(fcw_wea), .fcw_addra(fcw_addra), .fcw_dina(fcw_dina)
     );
 
     //==========================================================================
@@ -133,10 +135,10 @@ module tb_cnn_accelerator_multi;
         begin
             for (wi = 0; wi < 36; wi = wi + 1) begin
                 @(negedge clk);
-                w1_ena = 1'b1; w1_wea = 1'b1;
-                w1_addra = wi[5:0]; w1_dina = weight1_mem[wi];
+                c1w_ena = 1'b1; c1w_wea = 4'hF;
+                c1w_addra = wi[5:0]; c1w_dina = weight1_mem[wi];
             end
-            @(negedge clk); w1_ena = 1'b0; w1_wea = 1'b0;
+            @(negedge clk); c1w_ena = 1'b0; c1w_wea = 4'd0;
         end
     endtask
 
@@ -145,20 +147,21 @@ module tb_cnn_accelerator_multi;
         begin
             for (wi = 0; wi < 576; wi = wi + 1) begin
                 @(negedge clk);
-                c2w_ena = 1'b1;
+                c2w_ena = 1'b1; c2w_wea = 4'hF;
                 c2w_addra = wi[9:0]; c2w_dina = weight2_mem[wi];
             end
-            @(negedge clk); c2w_ena = 1'b0;
+            @(negedge clk); c2w_ena = 1'b0; c2w_wea = 4'd0;
         end
     endtask
 
-    // FC weight SIMD unpack → 256-bit Port A write (통합 TB 와 동일 포맷)
+    // FC weight SIMD unpack → asymmetric Port A 32b write (256b word 당 8 × 32b, LSB-first)
     task load_fcw;
-        integer pair, s, c, line_idx;
+        integer pair, s, c, k, line_idx;
         reg signed [7:0]  w0, w1;
         reg signed [16:0] w0_packed_17;
         reg signed [7:0]  w1_packed_8;
         reg [127:0]       w_even_concat, w_odd_concat;
+        reg [255:0]       word;
         begin
             for (pair = 0; pair < 5; pair = pair + 1) begin
                 for (s = 0; s < 144; s = s + 1) begin
@@ -173,13 +176,17 @@ module tb_cnn_accelerator_multi;
                         w_even_concat[c*8 +: 8] = w0;
                         w_odd_concat [c*8 +: 8] = w1;
                     end
-                    @(negedge clk);
-                    fcw_ena   = 1'b1;
-                    fcw_addra = pair * 144 + s;
-                    fcw_dina  = {w_odd_concat, w_even_concat};
+                    word = {w_odd_concat, w_even_concat};
+                    // 256b word → 8 × 32b : addr = (pair*144+s)*8 + k
+                    for (k = 0; k < 8; k = k + 1) begin
+                        @(negedge clk);
+                        fcw_ena   = 1'b1; fcw_wea = 4'hF;
+                        fcw_addra = (pair*144 + s)*8 + k;
+                        fcw_dina  = word[k*32 +: 32];
+                    end
                 end
             end
-            @(negedge clk); fcw_ena = 1'b0; fcw_addra = 10'd0; fcw_dina = 256'd0;
+            @(negedge clk); fcw_ena = 1'b0; fcw_wea = 4'd0; fcw_addra = 13'd0; fcw_dina = 32'd0;
         end
     endtask
 
@@ -191,14 +198,14 @@ module tb_cnn_accelerator_multi;
             bank = img_idx[0];
             for (k = 0; k < 196; k = k + 1) begin
                 @(negedge clk);
-                in_ena = 1'b1; in_wea = 1'b1;
+                in_ena = 1'b1; in_wea = 4'hF;
                 in_addra = {bank, k[7:0]};
                 in_dina  = {input_data[img_idx*784 + k*4 + 3],
                             input_data[img_idx*784 + k*4 + 2],
                             input_data[img_idx*784 + k*4 + 1],
                             input_data[img_idx*784 + k*4 + 0]};
             end
-            @(negedge clk); in_ena = 1'b0; in_wea = 1'b0;
+            @(negedge clk); in_ena = 1'b0; in_wea = 4'd0;
         end
     endtask
 

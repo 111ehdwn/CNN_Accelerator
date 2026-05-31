@@ -43,6 +43,7 @@ module tb_conv2_engine;
 
     // Conv2 weight Port A — TB init_weight driving (DUT 내부 conv2_weight_bram)
     reg          c2w_ena     = 1'b0;
+    reg  [3:0]   c2w_wea     = 4'd0;
     reg  [9:0]   c2w_addra   = 10'd0;
     reg  [31:0]  c2w_dina    = 32'd0;
 
@@ -102,6 +103,7 @@ module tb_conv2_engine;
         .start       (start),
 
         .c2w_ena     (c2w_ena),
+        .c2w_wea     (c2w_wea),
         .c2w_addra   (c2w_addra),
         .c2w_dina    (c2w_dina),
 
@@ -144,11 +146,12 @@ module tb_conv2_engine;
             for (wi = 0; wi < 576; wi = wi + 1) begin
                 @(negedge clk);
                 c2w_ena   = 1'b1;
+                c2w_wea   = 4'hF;
                 c2w_addra = wi[9:0];
                 c2w_dina  = weight_mem[wi];
             end
             @(negedge clk);
-            c2w_ena = 1'b0; c2w_addra = 10'd0; c2w_dina = 32'd0;
+            c2w_ena = 1'b0; c2w_wea = 4'd0; c2w_addra = 10'd0; c2w_dina = 32'd0;
             cycle_at_init_done = cycle_cnt;
             $display("[TB] @ cycle %0d : init_weight done", cycle_at_init_done);
         end

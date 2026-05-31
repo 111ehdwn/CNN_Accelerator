@@ -3,10 +3,10 @@
 // tb_conv1_engine.v
 // Single-image bit-exact testbench for conv1_engine  (uses real BMG IPs)
 //
-//   3 real BMG IP instantiation:
-//     bram_input         (PS write Port A 32-bit × 512, Conv1 read Port B 8-bit × 2048, L=1)
-//     conv1_weight_bram  (PS write Port A, Conv1 read Port B) — 32-bit × 64, L=2, REGCEB exposed
-//     bram_c1_to_c2      (Conv1 write Port A, TB read Port B) — 64-bit × 2048, L=2, byte-write 8-bit
+//   BMG IP (Vivado 프로젝트에 생성):
+//     bram_input         (TB 인스턴스)        PS write Port A 32b×512 / Conv1 read Port B 8b×2048, L=1
+//     bram_c1_to_c2      (TB 인스턴스)        Conv1 write Port A / TB read Port B, 64b×2048, L=2, byte-write
+//     conv1_weight_bram  (conv1_engine 내부)  32b×64, L=2, REGCEB — TB 는 c1w_* Port A 만 구동
 //
 //   자극 sequence:
 //     reset → init_input() → init_weight() → start pulse → wait done → compare c1c2 BMG bank 0 vs expected
@@ -47,21 +47,18 @@ module tb_conv1_engine;
 
     // bram_input interface (asymmetric: Port A 32-bit × 512, Port B 8-bit × 2048)
     reg          in_ena   = 1'b0;            // TB driving Port A (init_input, 32-bit burst)
-    reg          in_wea   = 1'b0;
+    reg  [3:0]   in_wea   = 4'd0;
     reg  [8:0]   in_addra = 9'd0;            // word addr (= byte_addr/4)
     reg  [31:0]  in_dina  = 32'd0;           // 4 bytes packed (little-endian)
     wire [10:0]  in_addrb;                   // Conv1 reads Port B, byte addr
     wire         in_enb;
     wire signed [7:0] in_doutb;
 
-    // conv1_weight_bram interface
-    reg          w_ena    = 1'b0;            // TB driving Port A (init_weight)
-    reg          w_wea    = 1'b0;
-    reg  [5:0]   w_addra  = 6'd0;
-    reg  [31:0]  w_dina   = 32'd0;
-    wire [5:0]   w_addrb;
-    wire         w_enb;
-    wire [31:0]  w_doutb;
+    // Conv1 weight BRAM Port A (TB driving — engine 내부 conv1_weight_bram)
+    reg          c1w_ena    = 1'b0;
+    reg  [3:0]   c1w_wea    = 4'd0;
+    reg  [5:0]   c1w_addra  = 6'd0;
+    reg  [31:0]  c1w_dina   = 32'd0;
 
     // bram_c1_to_c2 interface
     wire         c1c2_we_a;                  // Conv1 writes Port A
@@ -87,18 +84,7 @@ module tb_conv1_engine;
         .doutb (in_doutb)
     );
 
-    conv1_weight_bram w_bmg (
-        .clka  (clk),
-        .ena   (w_ena),
-        .wea   (w_wea),
-        .addra (w_addra),
-        .dina  (w_dina),
-        .clkb  (clk),
-        .enb   (w_enb),
-        .addrb (w_addrb),
-        .doutb (w_doutb),
-        .regceb(1'b1)                        // 상수 1: 마지막 weight propagation 보장
-    );
+    // conv1_weight_bram 은 conv1_engine 내부 인스턴스로 이동 (TB 외부 인스턴스 제거)
 
     bram_c1_to_c2 c1c2_bmg (
         .clka  (clk),
@@ -130,9 +116,10 @@ module tb_conv1_engine;
         .in_bram_en   (in_enb),
         .in_bram_dout (in_doutb),
 
-        .w_bram_addr  (w_addrb),
-        .w_bram_en    (w_enb),
-        .w_bram_dout  (w_doutb),
+        .c1w_ena      (c1w_ena),
+        .c1w_wea      (c1w_wea),
+        .c1w_addra    (c1w_addra),
+        .c1w_dina     (c1w_dina),
 
         .c1c2_we      (c1c2_we_a),
         .c1c2_wea     (c1c2_wea_a),
@@ -167,7 +154,7 @@ module tb_conv1_engine;
             for (k = 0; k < 196; k = k + 1) begin
                 @(negedge clk);
                 in_ena   = 1'b1;
-                in_wea   = 1'b1;
+                in_wea   = 4'hF;
                 in_addra = {1'b0, k[7:0]};         // bank 0 (MSB=0), word addr 0..195
                 in_dina  = {input_mem[k*4 + 3],
                             input_mem[k*4 + 2],
@@ -176,7 +163,7 @@ module tb_conv1_engine;
             end
             @(negedge clk);
             in_ena   = 1'b0;
-            in_wea   = 1'b0;
+            in_wea   = 4'd0;
             $display("[TB] @ cycle %0d : init_input done", cycle_cnt);
         end
     endtask
@@ -190,14 +177,14 @@ module tb_conv1_engine;
             $display("[TB] @ cycle %0d : init_weight start (36 cycle)", cycle_cnt);
             for (wi = 0; wi < 36; wi = wi + 1) begin
                 @(negedge clk);
-                w_ena   = 1'b1;
-                w_wea   = 1'b1;
-                w_addra = wi[5:0];
-                w_dina  = weight_mem[wi];
+                c1w_ena   = 1'b1;
+                c1w_wea   = 4'hF;
+                c1w_addra = wi[5:0];
+                c1w_dina  = weight_mem[wi];
             end
             @(negedge clk);
-            w_ena   = 1'b0;
-            w_wea   = 1'b0;
+            c1w_ena   = 1'b0;
+            c1w_wea   = 4'd0;
             $display("[TB] @ cycle %0d : init_weight done", cycle_cnt);
         end
     endtask

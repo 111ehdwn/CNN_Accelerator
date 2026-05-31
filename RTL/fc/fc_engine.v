@@ -42,8 +42,9 @@ module fc_engine #(
     // 256-bit x 720, addr = pair*144 + spatial
     //==========================================================================
     input  wire         fcw_ena,
-    input  wire [9:0]   fcw_addra,
-    input  wire [255:0] fcw_dina,
+    input  wire [3:0]   fcw_wea,     // byte-write (AXI WSTRB[3:0])
+    input  wire [12:0]  fcw_addra,   // asymmetric Port A: 32b × 5760 (720×8)
+    input  wire [31:0]  fcw_dina,
 
     //==========================================================================
     // poolfc buffer read port
@@ -117,8 +118,8 @@ module fc_engine #(
 
     fc_weight_bram fcw_bmg_inst (
         .clka   (clk),
-        .ena    (fcw_ena),                 // ★ ENA + WEA 둘 다 결선 필수
-        .wea    (fcw_ena),                 //   (conv2_weight_bram 의 ENA 누락 버그와 동일 원인 예방)
+        .ena    (fcw_ena),                 // ENA=fcw_ena
+        .wea    (fcw_wea),                 // WEA=fcw_wea[3:0] byte-write (AXI WSTRB 직결)
         .addra  (fcw_addra),
         .dina   (fcw_dina),
 

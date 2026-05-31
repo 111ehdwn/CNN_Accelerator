@@ -29,8 +29,10 @@
 //        (실제 BMG IP + DSP48E1 unisim 과 module 중복 정의 충돌).
 //     2. hex 경로는 아래 `ifdef __ICARUS__ 로 자동 분기 — `else(Vivado) 블록 경로를
 //        VM 실제 위치로 조정하고, data/ 의 hex 들을 VM 으로 복사/공유.
-//     3. 필요 BMG IP: bram_input, conv1_weight_bram, bram_c1_to_c2, conv2_weight_bram,
-//        bram_c2_to_pool, fc_weight_bram.  (poolfc 는 본 TB 의 behavioral mem — IP 불필요)
+//     3. 필요 BMG IP (Vivado 생성):
+//        - TB 인스턴스        : bram_input, bram_c1_to_c2, bram_c2_to_pool
+//        - engine 내부 인스턴스 : conv1_weight_bram(conv1), conv2_weight_bram(conv2), fc_weight_bram(fc)
+//        (poolfc 는 본 TB 의 behavioral mem — IP 불필요)
 //////////////////////////////////////////////////////////////////////////////////
 
 //   경로: iverilog(__ICARUS__ 자동 정의)=로컬 상대(cwd=프로젝트 루트),
@@ -93,21 +95,18 @@ module tb_conv1_conv2_maxpool_fc_multi;
     //==========================================================================
     // bram_input
     reg          in_ena   = 1'b0;
-    reg          in_wea   = 1'b0;
+    reg  [3:0]   in_wea   = 4'd0;
     reg  [8:0]   in_addra = 9'd0;
     reg  [31:0]  in_dina  = 32'd0;
     wire [10:0]  in_addrb;
     wire         in_enb;
     wire signed [7:0] in_doutb;
 
-    // conv1_weight_bram
-    reg          w1_ena   = 1'b0;
-    reg          w1_wea   = 1'b0;
-    reg  [5:0]   w1_addra = 6'd0;
-    reg  [31:0]  w1_dina  = 32'd0;
-    wire [5:0]   w1_addrb;
-    wire         w1_enb;
-    wire [31:0]  w1_doutb;
+    // conv1 weight Port A (conv1_engine 내부 BMG)
+    reg          c1w_ena    = 1'b0;
+    reg  [3:0]   c1w_wea    = 4'd0;
+    reg  [5:0]   c1w_addra  = 6'd0;
+    reg  [31:0]  c1w_dina   = 32'd0;
 
     // bram_c1_to_c2 (conv1 write A, conv2 read B)
     wire         c1c2_we_a;
@@ -120,6 +119,7 @@ module tb_conv1_conv2_maxpool_fc_multi;
 
     // conv2_weight_bram (Port A write, conv2_engine 내부에서 read)
     reg          c2w_ena   = 1'b0;
+    reg  [3:0]   c2w_wea   = 4'd0;
     reg  [9:0]   c2w_addra = 10'd0;
     reg  [31:0]  c2w_dina  = 32'd0;
 
@@ -143,8 +143,9 @@ module tb_conv1_conv2_maxpool_fc_multi;
 
     // fc_weight_bram (Port A write, fc_engine 내부에서 read)
     reg          fcw_ena   = 1'b0;
-    reg  [9:0]   fcw_addra = 10'd0;
-    reg  [255:0] fcw_dina  = 256'd0;
+    reg  [3:0]   fcw_wea   = 4'd0;
+    reg  [12:0]  fcw_addra = 13'd0;
+    reg  [31:0]  fcw_dina  = 32'd0;
 
     //==========================================================================
     // Counters (handshake-tracked, backpressure + 통계용)
@@ -178,13 +179,7 @@ module tb_conv1_conv2_maxpool_fc_multi;
         .addrb (in_addrb), .doutb (in_doutb)
     );
 
-    conv1_weight_bram w1_bmg (
-        .clka  (clk), .ena (w1_ena), .wea (w1_wea),
-        .addra (w1_addra), .dina (w1_dina),
-        .clkb  (clk), .enb (w1_enb),
-        .addrb (w1_addrb), .doutb (w1_doutb),
-        .regceb(1'b1)
-    );
+    // conv1_weight_bram 은 conv1_engine 내부 인스턴스로 이동 (TB 외부 인스턴스 제거)
 
     bram_c1_to_c2 c1c2_bmg (
         .clka  (clk), .ena (c1c2_we_a), .wea (c1c2_wea_a),
@@ -219,9 +214,10 @@ module tb_conv1_conv2_maxpool_fc_multi;
         .in_bram_en     (in_enb),
         .in_bram_dout   (in_doutb),
 
-        .w_bram_addr    (w1_addrb),
-        .w_bram_en      (w1_enb),
-        .w_bram_dout    (w1_doutb),
+        .c1w_ena        (c1w_ena),
+        .c1w_wea        (c1w_wea),
+        .c1w_addra      (c1w_addra),
+        .c1w_dina       (c1w_dina),
 
         .c1c2_we        (c1c2_we_a),
         .c1c2_wea       (c1c2_wea_a),
@@ -238,6 +234,7 @@ module tb_conv1_conv2_maxpool_fc_multi;
         .start       (conv2_start),
 
         .c2w_ena     (c2w_ena),
+        .c2w_wea     (c2w_wea),
         .c2w_addra   (c2w_addra),
         .c2w_dina    (c2w_dina),
 
@@ -291,6 +288,7 @@ module tb_conv1_conv2_maxpool_fc_multi;
         .start       (fc_start),
 
         .fcw_ena     (fcw_ena),
+        .fcw_wea     (fcw_wea),
         .fcw_addra   (fcw_addra),
         .fcw_dina    (fcw_dina),
 
@@ -355,10 +353,11 @@ module tb_conv1_conv2_maxpool_fc_multi;
             $display("[TB] @ cyc %0d : init_weight1 start (36)", cycle_cnt);
             for (wi = 0; wi < 36; wi = wi + 1) begin
                 @(negedge clk);
-                w1_ena = 1'b1; w1_wea = 1'b1;
-                w1_addra = wi[5:0]; w1_dina = weight1_mem[wi];
+                c1w_ena = 1'b1;
+                c1w_wea = 4'hF;
+                c1w_addra = wi[5:0]; c1w_dina = weight1_mem[wi];
             end
-            @(negedge clk); w1_ena = 1'b0; w1_wea = 1'b0;
+            @(negedge clk); c1w_ena = 1'b0; c1w_wea = 4'd0;
             $display("[TB] @ cyc %0d : init_weight1 done", cycle_cnt);
         end
     endtask
@@ -371,9 +370,10 @@ module tb_conv1_conv2_maxpool_fc_multi;
             for (wi = 0; wi < 576; wi = wi + 1) begin
                 @(negedge clk);
                 c2w_ena = 1'b1;
+                c2w_wea = 4'hF;
                 c2w_addra = wi[9:0]; c2w_dina = weight2_mem[wi];
             end
-            @(negedge clk); c2w_ena = 1'b0;
+            @(negedge clk); c2w_ena = 1'b0; c2w_wea = 4'd0;
             $display("[TB] @ cyc %0d : init_weight2 done", cycle_cnt);
         end
     endtask
@@ -383,11 +383,12 @@ module tb_conv1_conv2_maxpool_fc_multi;
     //   dina = {w_odd_concat[127:0](16ch), w_even_concat[127:0](16ch)}
     //   ★ TODO: weight 생성 코드 확정 후 packing/unpack 포맷 재확인.
     task load_fc_weights;
-        integer pair, s, c, line_idx;
+        integer pair, s, c, k, line_idx;
         reg signed [7:0]  w0, w1;
         reg signed [16:0] w0_packed_17;
         reg signed [7:0]  w1_packed_8;
         reg [127:0]       w_even_concat, w_odd_concat;
+        reg [255:0]       word;
         begin
             $display("[TB] @ cyc %0d : load_fc_weights start (720)", cycle_cnt);
             for (pair = 0; pair < 5; pair = pair + 1) begin
@@ -403,13 +404,17 @@ module tb_conv1_conv2_maxpool_fc_multi;
                         w_even_concat[c*8 +: 8] = w0;
                         w_odd_concat [c*8 +: 8] = w1;
                     end
-                    @(negedge clk);
-                    fcw_ena   = 1'b1;
-                    fcw_addra = pair * 144 + s;
-                    fcw_dina  = {w_odd_concat, w_even_concat};
+                    word = {w_odd_concat, w_even_concat};
+                    for (k = 0; k < 8; k = k + 1) begin
+                        @(negedge clk);
+                        fcw_ena   = 1'b1;
+                        fcw_wea   = 4'hF;
+                        fcw_addra = (pair*144 + s)*8 + k;
+                        fcw_dina  = word[k*32 +: 32];
+                    end
                 end
             end
-            @(negedge clk); fcw_ena = 1'b0; fcw_addra = 10'd0; fcw_dina = 256'd0;
+            @(negedge clk); fcw_ena = 1'b0; fcw_wea = 4'd0; fcw_addra = 13'd0; fcw_dina = 32'd0;
             $display("[TB] @ cyc %0d : load_fc_weights done", cycle_cnt);
         end
     endtask
@@ -423,14 +428,14 @@ module tb_conv1_conv2_maxpool_fc_multi;
             bank = img_idx[0];
             for (k = 0; k < 196; k = k + 1) begin
                 @(negedge clk);
-                in_ena = 1'b1; in_wea = 1'b1;
+                in_ena = 1'b1; in_wea = 4'hF;
                 in_addra = {bank, k[7:0]};
                 in_dina  = {input_data[img_idx*784 + k*4 + 3],
                             input_data[img_idx*784 + k*4 + 2],
                             input_data[img_idx*784 + k*4 + 1],
                             input_data[img_idx*784 + k*4 + 0]};
             end
-            @(negedge clk); in_ena = 1'b0; in_wea = 1'b0;
+            @(negedge clk); in_ena = 1'b0; in_wea = 4'd0;
         end
     endtask
 

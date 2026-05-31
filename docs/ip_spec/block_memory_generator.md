@@ -388,6 +388,7 @@ end
 
 Pre-packed Conv1 SIMD weight (36 entry × 32-bit) 를 PS 가 write,
 weight_loader 가 read 하여 18 PE 적재 (시스템 시작 시 1회).
+인스턴스 위치: `conv1_engine.v` 내부 (`c1w_bmg_inst`) — conv2/fc weight 와 일관 (Port A 만 외부 passthrough).
 
 ### 7.2 Vivado 설정
 
@@ -410,17 +411,18 @@ weight_loader 가 read 하여 18 PE 적재 (시스템 시작 시 1회).
 ### 7.3 Port signature
 
 ```verilog
-conv1_weight_bram inst (
+// conv1_engine.v 내부 인스턴스 (c1w_bmg_inst)
+conv1_weight_bram c1w_bmg_inst (
     .clka  (clk),
-    .ena   (w_ena),                 // ENA + WEA 둘 다 결선 필수 (Conv2 weight 와 동일)
-    .wea   (w_wea),
-    .addra (6-bit),
-    .dina  (32-bit),                // SIMD packed weight (W1*2^17 + W0)
+    .ena   (c1w_ena),               // ENA + WEA 둘 다 결선 필수 (Conv2 weight 와 동일)
+    .wea   (c1w_ena),
+    .addra (c1w_addra),             // 6-bit, PS write Port A
+    .dina  (c1w_dina),              // 32-bit SIMD packed weight (W1*2^17 + W0)
 
     .clkb  (clk),
-    .enb   (w_bram_en),
-    .addrb (w_bram_addr = 6-bit),
-    .doutb (w_bram_dout = 32-bit),
+    .enb   (w_bram_en),             // weight_loader ↔ 내부 wire
+    .addrb (w_bram_addr),           // 6-bit
+    .doutb (w_bram_dout),           // 32-bit
     .regceb(1'b1)                   // 마지막 weight propagation 보장
 );
 ```

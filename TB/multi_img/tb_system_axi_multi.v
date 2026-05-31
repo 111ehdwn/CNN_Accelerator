@@ -67,9 +67,9 @@ module tb_system_axi_multi;
     // PS-write BMG Port A
     //==========================================================================
     reg         in_ena=0, in_wea=0;   reg [8:0]  in_addra=0;   reg [31:0]  in_dina=0;
-    reg         w1_ena=0, w1_wea=0;   reg [5:0]  w1_addra=0;   reg [31:0]  w1_dina=0;
+    reg         c1w_ena=0;   reg [5:0]  c1w_addra=0;   reg [31:0]  c1w_dina=0;
     reg         c2w_ena=0;            reg [9:0]  c2w_addra=0;  reg [31:0]  c2w_dina=0;
-    reg         fcw_ena=0;            reg [9:0]  fcw_addra=0;  reg [255:0] fcw_dina=0;
+    reg         fcw_ena=0;            reg [12:0] fcw_addra=0;  reg [31:0]  fcw_dina=0;
 
     //==========================================================================
     // DUTs : CSR + cnn_accelerator
@@ -91,7 +91,7 @@ module tb_system_axi_multi;
         .enable(enable), .start(start), .img_ready(img_ready),
         .result(result), .img_done(img_done), .input_consumed(input_consumed),
         .in_ena(in_ena), .in_wea(in_wea), .in_addra(in_addra), .in_dina(in_dina),
-        .w1_ena(w1_ena), .w1_wea(w1_wea), .w1_addra(w1_addra), .w1_dina(w1_dina),
+        .c1w_ena(c1w_ena), .c1w_addra(c1w_addra), .c1w_dina(c1w_dina),
         .c2w_ena(c2w_ena), .c2w_addra(c2w_addra), .c2w_dina(c2w_dina),
         .fcw_ena(fcw_ena), .fcw_addra(fcw_addra), .fcw_dina(fcw_dina)
     );
@@ -145,9 +145,9 @@ module tb_system_axi_multi;
     //==========================================================================
     task load_w1; integer wi; begin
         for (wi=0; wi<36; wi=wi+1) begin
-            @(negedge ACLK); w1_ena=1; w1_wea=1; w1_addra=wi[5:0]; w1_dina=weight1_mem[wi];
+            @(negedge ACLK); c1w_ena=1; c1w_addra=wi[5:0]; c1w_dina=weight1_mem[wi];
         end
-        @(negedge ACLK); w1_ena=0; w1_wea=0;
+        @(negedge ACLK); c1w_ena=0;
     end endtask
 
     task load_w2; integer wi; begin
@@ -158,9 +158,10 @@ module tb_system_axi_multi;
     end endtask
 
     task load_fcw;
-        integer pair, s, c, line_idx;
+        integer pair, s, c, k, line_idx;
         reg signed [7:0] w0, w1; reg signed [16:0] w0p; reg signed [7:0] w1p;
         reg [127:0] we, wo;
+        reg [255:0] word;
     begin
         for (pair=0; pair<5; pair=pair+1)
           for (s=0; s<144; s=s+1) begin
@@ -173,7 +174,10 @@ module tb_system_axi_multi;
                 w1 = w1p + (w0p[16] ? 8'sd1 : 8'sd0);
                 we[c*8 +: 8] = w0; wo[c*8 +: 8] = w1;
             end
-            @(negedge ACLK); fcw_ena=1; fcw_addra=pair*144+s; fcw_dina={wo,we};
+            word = {wo, we};
+            for (k=0; k<8; k=k+1) begin   // 256b → 8 × 32b (LSB-first)
+                @(negedge ACLK); fcw_ena=1; fcw_addra=(pair*144+s)*8+k; fcw_dina=word[k*32 +: 32];
+            end
           end
         @(negedge ACLK); fcw_ena=0;
     end endtask

@@ -11,11 +11,11 @@
 //     compare_process : @posedge conv2_wdone 마다 c2pool BMG bank (i&1) read + expected 비교 + succ_rdone
 //
 //   5 BMG IP (Vivado 프로젝트에 미리 생성):
-//     bram_input         (Port A 32b × 512, Port B 8b × 2048, asymmetric, L=1)
-//     conv1_weight_bram  (32b × 64,  L=2, REGCEB 노출)
-//     bram_c1_to_c2      (64b × 2048, L=2, byte-write 8-bit)
-//     conv2_weight_bram  (32b × 1024, L=2, REGCEB 노출)
-//     bram_c2_to_pool    (128b × 2048, L=1)
+//     bram_input         (TB 인스턴스)         Port A 32b×512 / Port B 8b×2048, asymmetric, L=1
+//     bram_c1_to_c2      (TB 인스턴스)         64b×2048, L=2, byte-write 8-bit
+//     bram_c2_to_pool    (TB 인스턴스)         128b×2048, L=1
+//     conv1_weight_bram  (conv1_engine 내부)   32b×64,  L=2, REGCEB
+//     conv2_weight_bram  (conv2_engine 내부)   32b×1024, L=2, REGCEB
 //   상세 spec: docs/ip_spec/block_memory_generator.md
 //
 //   Sequential per-image:
@@ -59,21 +59,18 @@ module tb_conv1_conv2_multi;
     //==========================================================================
     // bram_input — TB writes Port A, conv1 reads Port B
     reg          in_ena   = 1'b0;
-    reg          in_wea   = 1'b0;
+    reg  [3:0]   in_wea   = 4'd0;
     reg  [8:0]   in_addra = 9'd0;
     reg  [31:0]  in_dina  = 32'd0;
     wire [10:0]  in_addrb;
     wire         in_enb;
     wire signed [7:0] in_doutb;
 
-    // conv1_weight_bram — TB writes Port A
-    reg          w1_ena   = 1'b0;
-    reg          w1_wea   = 1'b0;
-    reg  [5:0]   w1_addra = 6'd0;
-    reg  [31:0]  w1_dina  = 32'd0;
-    wire [5:0]   w1_addrb;
-    wire         w1_enb;
-    wire [31:0]  w1_doutb;
+    // conv1 weight Port A (conv1_engine 내부 BMG — TB 는 Port A 만 구동)
+    reg          c1w_ena    = 1'b0;
+    reg  [3:0]   c1w_wea    = 4'd0;
+    reg  [5:0]   c1w_addra  = 6'd0;
+    reg  [31:0]  c1w_dina   = 32'd0;
 
     // bram_c1_to_c2 — conv1 writes Port A, conv2 reads Port B
     wire         c1c2_we_a;
@@ -86,6 +83,7 @@ module tb_conv1_conv2_multi;
 
     // conv2_weight_bram — TB writes Port A
     reg          c2w_ena   = 1'b0;
+    reg  [3:0]   c2w_wea   = 4'd0;
     reg  [9:0]   c2w_addra = 10'd0;
     reg  [31:0]  c2w_dina  = 32'd0;
 
@@ -111,13 +109,7 @@ module tb_conv1_conv2_multi;
         .addrb (in_addrb), .doutb (in_doutb)
     );
 
-    conv1_weight_bram w1_bmg (
-        .clka  (clk), .ena (w1_ena), .wea (w1_wea),
-        .addra (w1_addra), .dina (w1_dina),
-        .clkb  (clk), .enb (w1_enb),
-        .addrb (w1_addrb), .doutb (w1_doutb),
-        .regceb(1'b1)
-    );
+    // conv1_weight_bram 은 conv1_engine 내부 인스턴스로 이동 (TB 외부 인스턴스 제거)
 
     bram_c1_to_c2 c1c2_bmg (
         .clka  (clk), .ena (c1c2_we_a), .wea (c1c2_wea_a),
@@ -151,9 +143,10 @@ module tb_conv1_conv2_multi;
         .in_bram_en   (in_enb),
         .in_bram_dout (in_doutb),
 
-        .w_bram_addr  (w1_addrb),
-        .w_bram_en    (w1_enb),
-        .w_bram_dout  (w1_doutb),
+        .c1w_ena      (c1w_ena),
+        .c1w_wea      (c1w_wea),
+        .c1w_addra    (c1w_addra),
+        .c1w_dina     (c1w_dina),
 
         .c1c2_we      (c1c2_we_a),
         .c1c2_wea     (c1c2_wea_a),
@@ -170,6 +163,7 @@ module tb_conv1_conv2_multi;
         .start       (conv2_start),
 
         .c2w_ena     (c2w_ena),
+        .c2w_wea     (c2w_wea),
         .c2w_addra   (c2w_addra),
         .c2w_dina    (c2w_dina),
 
@@ -217,10 +211,11 @@ module tb_conv1_conv2_multi;
             $display("[TB] @ cycle %0d : init_weight1 start (36 cycle)", cycle_cnt);
             for (wi = 0; wi < 36; wi = wi + 1) begin
                 @(negedge clk);
-                w1_ena   = 1'b1; w1_wea = 1'b1;
-                w1_addra = wi[5:0]; w1_dina = weight1_mem[wi];
+                c1w_ena   = 1'b1;
+                c1w_wea   = 4'hF;
+                c1w_addra = wi[5:0]; c1w_dina = weight1_mem[wi];
             end
-            @(negedge clk); w1_ena = 1'b0; w1_wea = 1'b0;
+            @(negedge clk); c1w_ena = 1'b0; c1w_wea = 4'd0;
             $display("[TB] @ cycle %0d : init_weight1 done", cycle_cnt);
         end
     endtask
@@ -232,9 +227,10 @@ module tb_conv1_conv2_multi;
             for (wi = 0; wi < 576; wi = wi + 1) begin
                 @(negedge clk);
                 c2w_ena   = 1'b1;
+                c2w_wea   = 4'hF;
                 c2w_addra = wi[9:0]; c2w_dina = weight2_mem[wi];
             end
-            @(negedge clk); c2w_ena = 1'b0;
+            @(negedge clk); c2w_ena = 1'b0; c2w_wea = 4'd0;
             $display("[TB] @ cycle %0d : init_weight2 done", cycle_cnt);
         end
     endtask
@@ -248,14 +244,14 @@ module tb_conv1_conv2_multi;
             bank = img_idx[0];
             for (k = 0; k < 196; k = k + 1) begin
                 @(negedge clk);
-                in_ena   = 1'b1; in_wea = 1'b1;
+                in_ena   = 1'b1; in_wea = 4'hF;
                 in_addra = {bank, k[7:0]};
                 in_dina  = {input_data[img_idx*784 + k*4 + 3],
                             input_data[img_idx*784 + k*4 + 2],
                             input_data[img_idx*784 + k*4 + 1],
                             input_data[img_idx*784 + k*4 + 0]};
             end
-            @(negedge clk); in_ena = 1'b0; in_wea = 1'b0;
+            @(negedge clk); in_ena = 1'b0; in_wea = 4'd0;
         end
     endtask
 

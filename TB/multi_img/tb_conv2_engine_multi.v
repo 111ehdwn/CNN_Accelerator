@@ -51,6 +51,7 @@ module tb_conv2_engine_multi;
 
     // Conv2 weight Port A — TB 가 init_weight task 로 driving (실제 PS 동작 emulation)
     reg          c2w_ena        = 1'b0;
+    reg  [3:0]   c2w_wea        = 4'd0;
     reg  [9:0]   c2w_addra      = 10'd0;
     reg  [31:0]  c2w_dina       = 32'd0;
 
@@ -124,6 +125,7 @@ module tb_conv2_engine_multi;
 
         // Conv2 weight BMG Port A (TB 가 init_weight 로 driving)
         .c2w_ena     (c2w_ena),
+        .c2w_wea     (c2w_wea),
         .c2w_addra   (c2w_addra),
         .c2w_dina    (c2w_dina),
 
@@ -177,11 +179,13 @@ module tb_conv2_engine_multi;
             for (wi = 0; wi < 576; wi = wi + 1) begin
                 @(negedge clk);
                 c2w_ena   = 1'b1;
+                c2w_wea   = 4'hF;
                 c2w_addra = wi[9:0];
                 c2w_dina  = weight_mem[wi];
             end
             @(negedge clk);
             c2w_ena   = 1'b0;
+            c2w_wea   = 4'd0;
             c2w_addra = 10'd0;
             c2w_dina  = 32'd0;
             $display("[TB] @ cycle %0d : init_weight done", cycle_cnt);
@@ -326,6 +330,7 @@ module tb_conv2_engine_multi;
 
         // Init driving signals (defensive)
         c2w_ena       = 1'b0;
+        c2w_wea       = 4'd0;
         c2w_addra     = 10'd0;
         c2w_dina      = 32'd0;
         c1c2_ena_a    = 1'b0;

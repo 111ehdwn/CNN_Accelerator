@@ -24,7 +24,7 @@
 module bram_input (
     input  wire        clka,
     input  wire        ena,
-    input  wire        wea,
+    input  wire [3:0]  wea,                 // byte-write (AXI WSTRB 직결)
     input  wire [8:0]  addra,
     input  wire [31:0] dina,
 
@@ -36,11 +36,11 @@ module bram_input (
     reg [7:0] mem [0:2047];
 
     always @(posedge clka) begin
-        if (ena && wea) begin
-            mem[{addra, 2'b00} + 11'd0] <= dina[7:0];
-            mem[{addra, 2'b00} + 11'd1] <= dina[15:8];
-            mem[{addra, 2'b00} + 11'd2] <= dina[23:16];
-            mem[{addra, 2'b00} + 11'd3] <= dina[31:24];
+        if (ena) begin
+            if (wea[0]) mem[{addra, 2'b00} + 11'd0] <= dina[7:0];
+            if (wea[1]) mem[{addra, 2'b00} + 11'd1] <= dina[15:8];
+            if (wea[2]) mem[{addra, 2'b00} + 11'd2] <= dina[23:16];
+            if (wea[3]) mem[{addra, 2'b00} + 11'd3] <= dina[31:24];
         end
     end
 
@@ -56,7 +56,7 @@ endmodule
 module conv1_weight_bram (
     input  wire        clka,
     input  wire        ena,
-    input  wire        wea,
+    input  wire [3:0]  wea,                 // byte-write (AXI WSTRB 직결)
     input  wire [5:0]  addra,
     input  wire [31:0] dina,
 
@@ -69,7 +69,12 @@ module conv1_weight_bram (
     reg [31:0] mem [0:63];
     reg [31:0] pre;
 
-    always @(posedge clka) if (ena && wea) mem[addra] <= dina;
+    always @(posedge clka) if (ena) begin
+        if (wea[0]) mem[addra][ 7: 0] <= dina[ 7: 0];
+        if (wea[1]) mem[addra][15: 8] <= dina[15: 8];
+        if (wea[2]) mem[addra][23:16] <= dina[23:16];
+        if (wea[3]) mem[addra][31:24] <= dina[31:24];
+    end
 
     always @(posedge clkb) begin
         if (enb)    pre   <= mem[addrb];   // stage 1
@@ -124,7 +129,7 @@ endmodule
 module conv2_weight_bram (
     input  wire        clka,
     input  wire        ena,
-    input  wire        wea,
+    input  wire [3:0]  wea,                 // byte-write (AXI WSTRB 직결)
     input  wire [9:0]  addra,
     input  wire [31:0] dina,
 
@@ -137,7 +142,12 @@ module conv2_weight_bram (
     reg [31:0] mem [0:1023];
     reg [31:0] pre;
 
-    always @(posedge clka) if (ena && wea) mem[addra] <= dina;
+    always @(posedge clka) if (ena) begin
+        if (wea[0]) mem[addra][ 7: 0] <= dina[ 7: 0];
+        if (wea[1]) mem[addra][15: 8] <= dina[15: 8];
+        if (wea[2]) mem[addra][23:16] <= dina[23:16];
+        if (wea[3]) mem[addra][31:24] <= dina[31:24];
+    end
 
     always @(posedge clkb) begin
         if (enb)    pre   <= mem[addrb];
@@ -173,23 +183,32 @@ endmodule
 // fc_weight_bram : SDP 256b × 1024, L=1 (no regceb pin)
 //   (tb_fc_engine.v 의 behavioral 정의와 동일 거동)
 // ===========================================================================
-module fc_weight_bram (
+module fc_weight_bram (   // ASYMMETRIC: Port A 32b write (×5760) / Port B 256b read (×720)
     input  wire         clka,
     input  wire         ena,
-    input  wire         wea,
-    input  wire [9:0]   addra,
-    input  wire [255:0] dina,
+    input  wire [3:0]   wea,                // byte-write (AXI WSTRB 직결)
+    input  wire [12:0]  addra,
+    input  wire [31:0]  dina,
 
     input  wire         clkb,
     input  wire         enb,
     input  wire [9:0]   addrb,
     output reg  [255:0] doutb
 );
-    reg [255:0] mem [0:1023];
+    reg [31:0] mem [0:5759];   // 5760 = 720 × (256/32)
+    integer k;
 
-    always @(posedge clka) if (ena && wea) mem[addra] <= dina;
+    always @(posedge clka) if (ena) begin
+        if (wea[0]) mem[addra][ 7: 0] <= dina[ 7: 0];
+        if (wea[1]) mem[addra][15: 8] <= dina[15: 8];
+        if (wea[2]) mem[addra][23:16] <= dina[23:16];
+        if (wea[3]) mem[addra][31:24] <= dina[31:24];
+    end
 
-    always @(posedge clkb) if (enb) doutb <= mem[addrb];
+    // 256b read = 8 × 32b, LSB-first (narrow port 낮은 주소 ↔ wide port LSB)
+    always @(posedge clkb) if (enb)
+        for (k = 0; k < 8; k = k + 1)
+            doutb[k*32 +: 32] <= mem[addrb*8 + k];
 endmodule
 
 

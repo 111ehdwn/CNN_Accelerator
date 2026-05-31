@@ -20,13 +20,14 @@
 //     Input BRAM 2-bank: PS 가 write 하는 bank 와 conv1 internal input_bank_sel 이
 //     image index LSB 로 자동 sync (TB 검증과 동일 전제).
 //
-//   ★ 필요한 BMG IP (Vivado, 전부 본 모듈 내부 인스턴스):
+//   ★ 필요한 BMG IP (Vivado):
+//     [본 모듈 직접 인스턴스]
 //     bram_input        (PS write Port A 32b×512 / conv1 read Port B 8b×2048, L=1)
-//     conv1_weight_bram (PS write Port A 32b×64 / conv1 read Port B, L=2, regceb)
 //     bram_c1_to_c2     (conv1 write / conv2 read, 64b×2048, byte-write, L=2)
 //     bram_c2_to_pool   (conv2 write / maxpool read, 128b×2048, L=1)
 //     bram_pool_to_fc   (maxpool write / fc read, 128b×512, L=1)   ★ 신규 IP
-//     conv2_weight_bram (conv2_engine 내부) / fc_weight_bram (fc_engine 내부)
+//     [engine 내부 인스턴스 — Port A 만 외부 passthrough]
+//     conv1_weight_bram (conv1_engine) / conv2_weight_bram (conv2_engine) / fc_weight_bram (fc_engine)
 //   PS-write BMG 4종(Input/Conv1w/Conv2w/FCw)의 Port A 는 외부 포트로 노출 →
 //   block design 에서 AXI BRAM Controller 연결.
 //////////////////////////////////////////////////////////////////////////////////
@@ -49,22 +50,23 @@ module cnn_accelerator (
     // Input BRAM Port A  (PS write via AXI BRAM Ctrl)
     //==========================================================================
     input  wire        in_ena,
-    input  wire        in_wea,
+    input  wire [3:0]  in_wea,
     input  wire [8:0]  in_addra,
     input  wire [31:0] in_dina,
 
     //==========================================================================
     // Conv1 weight BRAM Port A  (PS write)
     //==========================================================================
-    input  wire        w1_ena,
-    input  wire        w1_wea,
-    input  wire [5:0]  w1_addra,
-    input  wire [31:0] w1_dina,
+    input  wire        c1w_ena,
+    input  wire [3:0]  c1w_wea,
+    input  wire [5:0]  c1w_addra,
+    input  wire [31:0] c1w_dina,
 
     //==========================================================================
     // Conv2 weight BRAM Port A  (PS write, conv2_engine 내부 BMG)
     //==========================================================================
     input  wire        c2w_ena,
+    input  wire [3:0]  c2w_wea,
     input  wire [9:0]  c2w_addra,
     input  wire [31:0] c2w_dina,
 
@@ -72,8 +74,9 @@ module cnn_accelerator (
     // FC weight BRAM Port A  (PS write, fc_engine 내부 BMG)
     //==========================================================================
     input  wire        fcw_ena,
-    input  wire [9:0]  fcw_addra,
-    input  wire [255:0] fcw_dina
+    input  wire [3:0]  fcw_wea,
+    input  wire [12:0] fcw_addra,    // asymmetric: 32b write (Port A), 256b read (Port B 내부)
+    input  wire [31:0] fcw_dina
 );
 
     //==========================================================================
@@ -107,11 +110,6 @@ module cnn_accelerator (
     wire [10:0]  in_addrb;
     wire         in_enb;
     wire signed [7:0] in_doutb;
-
-    // Conv1 weight Port B (conv1 read)
-    wire [5:0]   w1_addrb;
-    wire         w1_enb;
-    wire [31:0]  w1_doutb;
 
     // c1c2 (conv1 write A / conv2 read B)
     wire         c1c2_we_a;
@@ -148,13 +146,7 @@ module cnn_accelerator (
         .addrb (in_addrb), .doutb (in_doutb)
     );
 
-    conv1_weight_bram w1_bmg (
-        .clka  (clk), .ena (w1_ena), .wea (w1_wea),
-        .addra (w1_addra), .dina (w1_dina),
-        .clkb  (clk), .enb (w1_enb),
-        .addrb (w1_addrb), .doutb (w1_doutb),
-        .regceb(1'b1)
-    );
+    // conv1 weight BRAM 은 conv1_engine 내부 인스턴스 (conv2/fc 와 일관) — c1w Port A passthrough
 
     bram_c1_to_c2 c1c2_bmg (
         .clka  (clk), .ena (c1c2_we_a), .wea (c1c2_wea_a),
@@ -197,9 +189,10 @@ module cnn_accelerator (
         .in_bram_en   (in_enb),
         .in_bram_dout (in_doutb),
 
-        .w_bram_addr  (w1_addrb),
-        .w_bram_en    (w1_enb),
-        .w_bram_dout  (w1_doutb),
+        .c1w_ena      (c1w_ena),
+        .c1w_wea      (c1w_wea),
+        .c1w_addra    (c1w_addra),
+        .c1w_dina     (c1w_dina),
 
         .c1c2_we      (c1c2_we_a),
         .c1c2_wea     (c1c2_wea_a),
@@ -216,6 +209,7 @@ module cnn_accelerator (
         .start       (conv2_start_q),         // LOAD_WEIGHTS 1회
 
         .c2w_ena     (c2w_ena),
+        .c2w_wea     (c2w_wea),
         .c2w_addra   (c2w_addra),
         .c2w_dina    (c2w_dina),
 
@@ -265,6 +259,7 @@ module cnn_accelerator (
         .start       (1'b0),                  // prior_wdone 트리거 (start 미사용)
 
         .fcw_ena     (fcw_ena),
+        .fcw_wea     (fcw_wea),
         .fcw_addra   (fcw_addra),
         .fcw_dina    (fcw_dina),
 
