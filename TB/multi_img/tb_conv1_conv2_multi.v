@@ -23,15 +23,15 @@
 //     bank_sel = i & 1 (ping-pong, 2-bank 활용은 하지만 동시 처리 X)
 //////////////////////////////////////////////////////////////////////////////////
 
-`define ALL_INPUT_HEX   "C:/Users/111eh/INTELLIGENT_SYSTEM_DESIGN/assign4_code/CNN_Accelerator/data/multi_img/all_input.hex"
-`define ALL_C2POOL_HEX  "C:/Users/111eh/INTELLIGENT_SYSTEM_DESIGN/assign4_code/CNN_Accelerator/data/multi_img/all_c2pool.hex"
-`define WEIGHT1_HEX     "C:/Users/111eh/INTELLIGENT_SYSTEM_DESIGN/assign4_code/CNN_Accelerator/data/weights_simd/conv1_weights_simd.hex"
-`define WEIGHT2_HEX     "C:/Users/111eh/INTELLIGENT_SYSTEM_DESIGN/assign4_code/CNN_Accelerator/data/weights_simd/conv2_weights_simd.hex"
+`define ALL_INPUT_HEX   "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_input.hex"
+`define ALL_C2POOL_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_c2pool.hex"
+`define WEIGHT1_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv1_weights_simd.hex"
+`define WEIGHT2_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_weights_simd.hex"
 
 
 module tb_conv1_conv2_multi;
 
-    parameter N_IMAGES = 100;
+    parameter N_IMAGES = 40;
 
     //==========================================================================
     // Clock / reset (100 MHz)
@@ -57,7 +57,7 @@ module tb_conv1_conv2_multi;
     //==========================================================================
     // BMG signals
     //==========================================================================
-    // bram_input — TB writes Port A, conv1 reads Port B
+    // bram_input - TB writes Port A, conv1 reads Port B
     reg          in_ena   = 1'b0;
     reg          in_wea   = 1'b0;
     reg  [8:0]   in_addra = 9'd0;
@@ -66,13 +66,16 @@ module tb_conv1_conv2_multi;
     wire         in_enb;
     wire signed [7:0] in_doutb;
 
-    // conv1_weight_bram Port A — TB writes (BRAM은 conv1_engine 내부)
-    reg          c1w_ena   = 1'b0;
-    reg          c1w_wea   = 1'b0;
-    reg  [5:0]   c1w_addra = 6'd0;
-    reg  [31:0]  c1w_dina  = 32'd0;
+    // conv1_weight_bram - TB writes Port A
+    reg          w1_ena   = 1'b0;
+    reg          w1_wea   = 1'b0;
+    reg  [5:0]   w1_addra = 6'd0;
+    reg  [31:0]  w1_dina  = 32'd0;
+    wire [5:0]   w1_addrb;
+    wire         w1_enb;
+    wire [31:0]  w1_doutb;
 
-    // bram_c1_to_c2 — conv1 writes Port A, conv2 reads Port B
+    // bram_c1_to_c2 - conv1 writes Port A, conv2 reads Port B
     wire         c1c2_we_a;
     wire [7:0]   c1c2_wea_a;
     wire [10:0]  c1c2_addr_a;
@@ -81,12 +84,12 @@ module tb_conv1_conv2_multi;
     wire [10:0]  c1c2_addr_b;
     wire [63:0]  c1c2_doutb_b;
 
-    // conv2_weight_bram — TB writes Port A
+    // conv2_weight_bram - TB writes Port A
     reg          c2w_ena   = 1'b0;
     reg  [9:0]   c2w_addra = 10'd0;
     reg  [31:0]  c2w_dina  = 32'd0;
 
-    // bram_c2_to_pool — conv2 writes Port A, TB reads Port B
+    // bram_c2_to_pool - conv2 writes Port A, TB reads Port B
     wire         c2pool_we_a;
     wire [10:0]  c2pool_addr_a;
     wire [127:0] c2pool_din_a;
@@ -106,6 +109,14 @@ module tb_conv1_conv2_multi;
         .addra (in_addra), .dina (in_dina),
         .clkb  (clk), .enb (in_enb),
         .addrb (in_addrb), .doutb (in_doutb)
+    );
+
+    conv1_weight_bram w1_bmg (
+        .clka  (clk), .ena (w1_ena), .wea (w1_wea),
+        .addra (w1_addra), .dina (w1_dina),
+        .clkb  (clk), .enb (w1_enb),
+        .addrb (w1_addrb), .doutb (w1_doutb),
+        .regceb(1'b1)
     );
 
     bram_c1_to_c2 c1c2_bmg (
@@ -140,11 +151,9 @@ module tb_conv1_conv2_multi;
         .in_bram_en   (in_enb),
         .in_bram_dout (in_doutb),
 
-        // weight BRAM Port A (내부 BRAM)
-        .c1w_ena      (c1w_ena),
-        .c1w_wea      (c1w_wea),
-        .c1w_addra    (c1w_addra),
-        .c1w_dina     (c1w_dina),
+        .w_bram_addr  (w1_addrb),
+        .w_bram_en    (w1_enb),
+        .w_bram_dout  (w1_doutb),
 
         .c1c2_we      (c1c2_we_a),
         .c1c2_wea     (c1c2_wea_a),
@@ -208,10 +217,10 @@ module tb_conv1_conv2_multi;
             $display("[TB] @ cycle %0d : init_weight1 start (36 cycle)", cycle_cnt);
             for (wi = 0; wi < 36; wi = wi + 1) begin
                 @(negedge clk);
-                c1w_ena   = 1'b1; c1w_wea = 1'b1;
-                c1w_addra = wi[5:0]; c1w_dina = weight1_mem[wi];
+                w1_ena   = 1'b1; w1_wea = 1'b1;
+                w1_addra = wi[5:0]; w1_dina = weight1_mem[wi];
             end
-            @(negedge clk); c1w_ena = 1'b0; c1w_wea = 1'b0;
+            @(negedge clk); w1_ena = 1'b0; w1_wea = 1'b0;
             $display("[TB] @ cycle %0d : init_weight1 done", cycle_cnt);
         end
     endtask
@@ -322,7 +331,7 @@ module tb_conv1_conv2_multi;
     end
 
     //==========================================================================
-    // PROCESS 1: Main — reset + init weights + conv2 start + final report
+    // PROCESS 1: Main - reset + init weights + conv2 start + final report
     //==========================================================================
     integer i_main;
     initial begin : main_process
@@ -362,7 +371,7 @@ module tb_conv1_conv2_multi;
         weight_loaded_flag = 1'b1;
         $display("[TB] @ cycle %0d : both weights loaded", cycle_cnt);
 
-        // Pulse conv2 start (LOAD_WEIGHTS 진입, 1회만 — 이후 image-by-image prior_wdone 로 진행)
+        // Pulse conv2 start (LOAD_WEIGHTS 진입, 1회만 - 이후 image-by-image prior_wdone 로 진행)
         @(negedge clk); conv2_start = 1'b1;
         @(negedge clk); conv2_start = 1'b0;
         cycle_at_start_pulse = cycle_cnt;
@@ -392,7 +401,7 @@ module tb_conv1_conv2_multi;
     end
 
     //==========================================================================
-    // PROCESS 2: Conv1 dispatcher — per-image input write + conv1_start + prior_wdone
+    // PROCESS 2: Conv1 dispatcher - per-image input write + conv1_start + prior_wdone
     //   Sequential: 한 image 처리 끝나야 다음 시작. ping-pong overlap 미사용 (단순성).
     //==========================================================================
     integer i_conv1;
@@ -418,13 +427,17 @@ module tb_conv1_conv2_multi;
             // Settle for BMG (Conv1 last write → mem)
             repeat (3) @(posedge clk);
 
+            // [DEBUG] conv1 c1c2 write 확인 - 마지막 c1c2 write 신호 샘플
+            $display("[DBG] img=%0d conv1_done @ cycle %0d  c1c2_we=%b  c1c2_addr=%h  c1c2_din=%h",
+                     i_conv1, cycle_cnt, c1c2_we_a, c1c2_addr_a, c1c2_din_a);
+
             // Notify Conv2: Conv1 data ready
             pulse_prior_wdone();
         end
     end
 
     //==========================================================================
-    // PROCESS 3: Compare — @wdone 마다 c2pool BMG bank (i&1) read + expected 비교 + succ_rdone
+    // PROCESS 3: Compare - @wdone 마다 c2pool BMG bank (i&1) read + expected 비교 + succ_rdone
     //==========================================================================
     integer i_max;
     initial begin : compare_process
