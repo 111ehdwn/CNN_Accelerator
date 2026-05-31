@@ -57,10 +57,11 @@ module tb_conv1_engine;
     wire              in_enb;
     wire signed [7:0] in_doutb;
 
-    // conv1_weight_bram Port B  (L=2, 32-bit, 6-bit addr)
-    wire [5:0]  w_addrb;
-    wire        w_enb;
-    wire [31:0] w_doutb;
+    // conv1_weight_bram Port A  (내부 BRAM write)
+    reg        c1w_ena   = 1'b0;
+    reg        c1w_wea   = 1'b0;
+    reg  [5:0] c1w_addra = 6'd0;
+    reg [31:0] c1w_dina  = 32'd0;
 
     // bram_c1_to_c2 Port A  (byte-write, 64-bit, written by DUT)
     wire        c1c2_we;
@@ -84,21 +85,11 @@ module tb_conv1_engine;
     assign in_doutb = in_doutb_r;
 
     //==========================================================================
-    // Behavioral: conv1_weight_bram
-    //   - 32-bit x 64 words.  conv1 uses addresses 0..35.
-    //   - Port B read latency = 2 clocks (matches BMG REGCEB=1):
-    //       stage1: gated by ENB  (core output register)
-    //       stage2: always active (REGCEB=1 output register)
-    //   - Weights loaded directly with $readmemh; no Port A logic needed.
+    // Weight BRAM: conv1_weight_bram 은 conv1_engine 내부에 있음.
+    //   TB 는 Port A (c1w_*) 를 통해 weight 초기화만 수행.
+    //   $readmemh 로 로컬 배열에 로드 → init_weight task 로 Port A write.
     //==========================================================================
-    reg [31:0] w_mem [0:63];
-
-    reg [31:0] w_dout_r1, w_dout_r2;
-    always @(posedge clk) begin
-        if (w_enb) w_dout_r1 <= w_mem[w_addrb]; // stage 1 - ENB-gated
-        w_dout_r2 <= w_dout_r1;                   // stage 2 - REGCEB=1 -> always
-    end
-    assign w_doutb = w_dout_r2;
+    reg [31:0] weight_mem [0:35];
 
     //==========================================================================
     // Behavioral: bram_c1_to_c2
@@ -147,10 +138,11 @@ module tb_conv1_engine;
         .in_bram_en   (in_enb),
         .in_bram_dout (in_doutb),
 
-        // conv1_weight_bram Port B
-        .w_bram_addr  (w_addrb),
-        .w_bram_en    (w_enb),
-        .w_bram_dout  (w_doutb),
+        // conv1_weight_bram Port A (내부 BRAM)
+        .c1w_ena      (c1w_ena),
+        .c1w_wea      (c1w_wea),
+        .c1w_addra    (c1w_addra),
+        .c1w_dina     (c1w_dina),
 
         // bram_c1_to_c2 Port A
         .c1c2_we      (c1c2_we),
@@ -177,6 +169,27 @@ module tb_conv1_engine;
     always @(posedge rdone) cycle_at_rdone = cycle_cnt;
 
     //==========================================================================
+    // Task: init_weight — Port A 로 36 cycle 동안 weight write
+    //==========================================================================
+    task init_weight;
+        integer wi;
+        begin
+            $display("[TB] @ cycle %0d : init_weight start (36 words)", cycle_cnt);
+            for (wi = 0; wi < 36; wi = wi + 1) begin
+                @(negedge clk);
+                c1w_ena   = 1'b1;
+                c1w_wea   = 1'b1;
+                c1w_addra = wi[5:0];
+                c1w_dina  = weight_mem[wi];
+            end
+            @(negedge clk);
+            c1w_ena = 1'b0;
+            c1w_wea = 1'b0;
+            $display("[TB] @ cycle %0d : init_weight done", cycle_cnt);
+        end
+    endtask
+
+    //==========================================================================
     // Main stimulus
     //==========================================================================
     integer i, mismatches;
@@ -191,7 +204,7 @@ module tb_conv1_engine;
         $display("[TB] Loading input    : %s", `CONV1_INPUT_HEX);
         $readmemh(`CONV1_INPUT_HEX,    in_mem);
         $display("[TB] Loading weights  : %s", `CONV1_WEIGHT_HEX);
-        $readmemh(`CONV1_WEIGHT_HEX,   w_mem);
+        $readmemh(`CONV1_WEIGHT_HEX,   weight_mem);
         $display("[TB] Loading expected : %s", `CONV1_EXPECTED_HEX);
         $readmemh(`CONV1_EXPECTED_HEX, expected_c1c2);
 
@@ -202,7 +215,10 @@ module tb_conv1_engine;
         rst = 1'b0;
         $display("[TB] @ cycle %0d : reset released", cycle_cnt);
 
-        // ---- 2. prior_wdone 1-cycle pulse ----
+        // ---- 2. Weight BRAM 초기화 (Port A write) ----
+        init_weight();
+
+        // ---- 4. prior_wdone 1-cycle pulse ----
         //   FSM: data_ready = (prior_diff_next < 0) = (-1 < 0) = 1
         //        output_avail = (after_diff_next < 2) = (0 < 2) = 1
         //   -> IDLE -> LOAD at the posedge where prior_wdone is sampled
@@ -213,16 +229,16 @@ module tb_conv1_engine;
         prior_wdone          = 1'b0;
         $display("[TB] @ cycle %0d : prior_wdone pulsed (FSM IDLE->LOAD)", cycle_at_prior_wdone);
 
-        // ---- 3. Wait for wdone (c1c2 write complete) ----
+        // ---- 5. Wait for wdone (c1c2 write complete) ----
         @(posedge wdone);
         cycle_at_wdone = cycle_cnt;
         $display("[TB] @ cycle %0d : wdone received  (rdone was @ cycle %0d)",
                  cycle_at_wdone, cycle_at_rdone);
 
-        // ---- 4. Settle a few cycles (last write committed to c1c2_mem) ----
+        // ---- 6. Settle a few cycles (last write committed to c1c2_mem) ----
         repeat (5) @(posedge clk);
 
-        // ---- 5. Compare c1c2_mem bank 0 (addr 0..1023) vs expected ----
+        // ---- 7. Compare c1c2_mem bank 0 (addr 0..1023) vs expected ----
         //   64-bit word layout:
         //     [7:0]  =ch0(oc0)  [15:8] =ch1(oc1)  [23:16]=ch2(oc2)  [31:24]=ch3(oc3)  <- Round0
         //     [39:32]=ch4(oc4)  [47:40]=ch5(oc5)  [55:48]=ch6(oc6)  [63:56]=ch7(oc7)  <- Round1
@@ -289,7 +305,7 @@ module tb_conv1_engine;
         if (mismatches > 10)
             $display("  ... (%0d more mismatches suppressed)", mismatches - 10);
 
-        // ---- 6. Final report ----
+        // ---- 8. Final report ----
         $display("");
         $display("================================================");
         $display("  Conv1 single-image testbench result");

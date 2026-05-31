@@ -66,14 +66,11 @@ module tb_conv1_conv2_multi;
     wire         in_enb;
     wire signed [7:0] in_doutb;
 
-    // conv1_weight_bram — TB writes Port A
-    reg          w1_ena   = 1'b0;
-    reg          w1_wea   = 1'b0;
-    reg  [5:0]   w1_addra = 6'd0;
-    reg  [31:0]  w1_dina  = 32'd0;
-    wire [5:0]   w1_addrb;
-    wire         w1_enb;
-    wire [31:0]  w1_doutb;
+    // conv1_weight_bram Port A — TB writes (BRAM은 conv1_engine 내부)
+    reg          c1w_ena   = 1'b0;
+    reg          c1w_wea   = 1'b0;
+    reg  [5:0]   c1w_addra = 6'd0;
+    reg  [31:0]  c1w_dina  = 32'd0;
 
     // bram_c1_to_c2 — conv1 writes Port A, conv2 reads Port B
     wire         c1c2_we_a;
@@ -104,19 +101,11 @@ module tb_conv1_conv2_multi;
     //==========================================================================
     // BMG IP instances
     //==========================================================================
-    bram_input in_bmg (
+    conv1_input_bram in_bmg (
         .clka  (clk), .ena (in_ena), .wea (in_wea),
         .addra (in_addra), .dina (in_dina),
         .clkb  (clk), .enb (in_enb),
         .addrb (in_addrb), .doutb (in_doutb)
-    );
-
-    conv1_weight_bram w1_bmg (
-        .clka  (clk), .ena (w1_ena), .wea (w1_wea),
-        .addra (w1_addra), .dina (w1_dina),
-        .clkb  (clk), .enb (w1_enb),
-        .addrb (w1_addrb), .doutb (w1_doutb),
-        .regceb(1'b1)
     );
 
     bram_c1_to_c2 c1c2_bmg (
@@ -151,9 +140,11 @@ module tb_conv1_conv2_multi;
         .in_bram_en   (in_enb),
         .in_bram_dout (in_doutb),
 
-        .w_bram_addr  (w1_addrb),
-        .w_bram_en    (w1_enb),
-        .w_bram_dout  (w1_doutb),
+        // weight BRAM Port A (내부 BRAM)
+        .c1w_ena      (c1w_ena),
+        .c1w_wea      (c1w_wea),
+        .c1w_addra    (c1w_addra),
+        .c1w_dina     (c1w_dina),
 
         .c1c2_we      (c1c2_we_a),
         .c1c2_wea     (c1c2_wea_a),
@@ -217,10 +208,10 @@ module tb_conv1_conv2_multi;
             $display("[TB] @ cycle %0d : init_weight1 start (36 cycle)", cycle_cnt);
             for (wi = 0; wi < 36; wi = wi + 1) begin
                 @(negedge clk);
-                w1_ena   = 1'b1; w1_wea = 1'b1;
-                w1_addra = wi[5:0]; w1_dina = weight1_mem[wi];
+                c1w_ena   = 1'b1; c1w_wea = 1'b1;
+                c1w_addra = wi[5:0]; c1w_dina = weight1_mem[wi];
             end
-            @(negedge clk); w1_ena = 1'b0; w1_wea = 1'b0;
+            @(negedge clk); c1w_ena = 1'b0; c1w_wea = 1'b0;
             $display("[TB] @ cycle %0d : init_weight1 done", cycle_cnt);
         end
     endtask
