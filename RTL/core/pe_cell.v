@@ -23,6 +23,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 module pe_cell #(
+    parameter STREAM = 0,                                   // 1 = weight reg 우회, packed_w → A포트 직결 (FC streaming)
     parameter DEPTH = 2,
     parameter ADDR_W = (DEPTH > 1) ? $clog2(DEPTH) : 1
 )(
@@ -47,31 +48,36 @@ module pe_cell #(
 );
 
     //==========================================================================
-    // 1. Weight Registers (Parametrized)
-    //==========================================================================
-    reg [24:0] w_regs [0:DEPTH-1];
-
-    integer i;
-    always @(posedge clk) begin
-        if(rst) begin
-            for (i=0; i<DEPTH; i=i+1) begin
-                w_regs[i] <= 25'd0;
-            end
-        end else if (load_en) begin
-            w_regs[load_idx] <= packed_w;
-        end
-    end
-
-    //==========================================================================
-    // 2. Active Weight Selection
+    // 1+2. Weight 공급 + Active Weight Selection
+    //
+    //   STREAM=0 (conv1/conv2): weight-stationary. packed_w 를 w_regs 에 load 후
+    //                           sel 로 매 cycle 활성 weight 선택.
+    //   STREAM=1 (FC)         : streaming. packed_w 를 레지스터/load 없이 A포트 직결.
+    //                           (FC 는 144 spatial 마다 weight 가 바뀌어 load 불가)
     //==========================================================================
     wire [24:0] active_reg;
     generate
-        if (DEPTH == 1) begin
+    if (STREAM == 0) begin : gen_wreg
+        reg [24:0] w_regs [0:DEPTH-1];
+        integer i;
+        always @(posedge clk) begin
+            if(rst) begin
+                for (i=0; i<DEPTH; i=i+1) begin
+                    w_regs[i] <= 25'd0;
+                end
+            end else if (load_en) begin
+                w_regs[load_idx] <= packed_w;
+            end
+        end
+
+        if (DEPTH == 1) begin : gen_sel1
             assign active_reg = w_regs[0];
-        end else begin
+        end else begin : gen_selN
             assign active_reg = w_regs[sel];
         end
+    end else begin : gen_stream
+        assign active_reg = packed_w;
+    end
     endgenerate
 
     //==========================================================================

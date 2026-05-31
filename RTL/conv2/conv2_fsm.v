@@ -159,16 +159,35 @@ module conv2_fsm (
     reg [3:0] drain_cnt;          // 0~11 (DRAIN 내부 cycle 카운터, pipeline depth=12)
 
     //==========================================================================
-    // 3. Handshake 차이 카운터 (signed 3-bit)
+    // 3. Handshake 차이 카운터 (signed 3-bit) — race-free combinational next value
+    //
+    //   docs/handshake_counter_nba_race.md 참조.
+    //   NBA register 만 보면 same-cycle 의 rdone/wdone/prior_wdone/succ_rdone 효과가
+    //   다음 cycle 까지 visible 안 됨 → IDLE→COMPUTE check 에서 stale 값 race.
+    //   해결: counter 의 next value 를 combinational 으로 계산 → condition 평가.
     //==========================================================================
     reg signed [2:0] prior_diff;
     reg signed [2:0] after_diff;
+    reg signed [2:0] prior_diff_next;
+    reg signed [2:0] after_diff_next;
+    always @(*) begin
+        case ({rdone, prior_wdone})
+            2'b10:   prior_diff_next = prior_diff + 3'sd1;
+            2'b01:   prior_diff_next = prior_diff - 3'sd1;
+            default: prior_diff_next = prior_diff;
+        endcase
+        case ({wdone, succ_rdone})
+            2'b10:   after_diff_next = after_diff + 3'sd1;
+            2'b01:   after_diff_next = after_diff - 3'sd1;
+            default: after_diff_next = after_diff;
+        endcase
+    end
 
     //==========================================================================
-    // 4. Compute 시작 조건
+    // 4. Compute 시작 조건 — next value 기준 평가 (race-free)
     //==========================================================================
-    wire data_ready    = (prior_diff < 3'sd0);
-    wire output_avail  = (after_diff < 3'sd2);
+    wire data_ready    = (prior_diff_next < 3'sd0);
+    wire output_avail  = (after_diff_next < 3'sd2);
     wire ready_to_compute = data_ready && output_avail;
 
     //==========================================================================
@@ -354,33 +373,15 @@ module conv2_fsm (
     end
 
     //==========================================================================
-    // 7. Handshake counter 갱신
-    //
-    //   prior_diff: rdone(+1), prior_wdone(-1)
-    //   after_diff: wdone(+1), succ_rdone(-1)
-    //   동시 발생 시 net 변화 0 (race 없음)
+    // 7. Handshake counter 갱신 — next value 그대로 NBA
     //==========================================================================
     always @(posedge clk) begin
         if (rst) begin
             prior_diff <= 3'sd0;
-        end else begin
-            case ({rdone, prior_wdone})
-                2'b10:   prior_diff <= prior_diff + 3'sd1;
-                2'b01:   prior_diff <= prior_diff - 3'sd1;
-                default: prior_diff <= prior_diff;
-            endcase
-        end
-    end
-
-    always @(posedge clk) begin
-        if (rst) begin
             after_diff <= 3'sd0;
         end else begin
-            case ({wdone, succ_rdone})
-                2'b10:   after_diff <= after_diff + 3'sd1;
-                2'b01:   after_diff <= after_diff - 3'sd1;
-                default: after_diff <= after_diff;
-            endcase
+            prior_diff <= prior_diff_next;
+            after_diff <= after_diff_next;
         end
     end
 

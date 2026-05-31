@@ -1,45 +1,89 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
-// Testbench: tb_maxpool_engine
-//   - conv2_out.hex          : conv2 HW 출력 → c2pool buffer에 packed 로드
-//   - python_maxpool_ref.hex : Python 레퍼런스 (post-sim 비교)
-//   - maxpool_out.hex        : HW 출력 저장
+// tb_maxpool_engine.v
+// Single-image bit-exact testbench for maxpool_engine (real bram_c2_to_pool BMG IP)
 //
-// 입력  c2pool : 128-bit × 576 (24×24), L=1 BRAM latency
-// 출력 poolfc  : 128-bit × 144 (12×12), 캡처 후 비교
-// 비교 총량    : 16채널 × 144픽셀 = 2304
+//   Pipeline:
+//     PS (init_c2pool) → bram_c2_to_pool Port A
+//                        bram_c2_to_pool Port B → Maxpool engine → poolfc behavioral mem
+//                                                                       ↓
+//                                                                   TB compare
+//
+//   필요한 BMG IP (Vivado 프로젝트에 미리 생성):
+//     bram_c2_to_pool : 128-bit × 2048, L=1, byte-write disable
+//
+//   자극 sequence:
+//     reset → init_c2pool (Port A 576 cycle write to bank 0) →
+//     pulse prior_wdone → maxpool auto-RUN (data_ready 조건 충족) → wait done →
+//     compare poolfc_mem vs maxpool_output.hex
+//
+//   4-way handshake test:
+//     prior_wdone 1 pulse → prior_diff = -1 → data_ready = true → IDLE→RUN
+//     image 끝 후 wdone pulse → after_diff = 1 → output_avail = true (still <2)
+//     succ_rdone 안 줘도 단일 image 는 정상 동작
+//
+//   Reference 형식:
+//     maxpool_output.hex (2304 line × 8-bit) — channel-major (ch0 144px → ch1 144px → ... → ch15 144px)
+//     poolfc 의 packed 128-bit word [pixel] 를 byte 별로 unpack 해서 비교
 //////////////////////////////////////////////////////////////////////////////////
+
+`define CONV2_OUT_HEX   "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_output_c2pool.hex"
+`define MAXPOOL_REF_HEX "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/maxpool_output.hex"
+
 
 module tb_maxpool_engine;
 
     //==========================================================================
-    // 1. Clock / Reset / Control
+    // Clock / reset (100 MHz, active-high rst)
     //==========================================================================
-    reg clk = 0;
-    reg rst = 1;
-    reg start = 0;
-
-    always #5 clk = ~clk;   // 10ns → 100MHz
+    reg clk = 1'b0;
+    reg rst = 1'b1;
+    always #5 clk = ~clk;
 
     //==========================================================================
-    // 2. DUT 포트 선언
+    // DUT signals
     //==========================================================================
+    reg          start        = 1'b0;        // legacy one-shot init (실제 trigger 는 prior_wdone)
     wire         done;
 
-    // c2pool 인터페이스 (DUT가 읽음)
-    wire [10:0]  c2pool_rd_addr;
-    wire         c2pool_rd_en;
-    reg  signed [127:0] c2pool_rd_data;
-    reg          c2pool_bank_sel = 1'b0;
+    reg          prior_wdone  = 1'b0;        // image 시작 trigger
+    reg          succ_rdone   = 1'b0;        // downstream 비움 알림 (단일 image 라 미사용)
+    wire         rdone;
+    wire         wdone;
 
-    // poolfc 인터페이스 (DUT가 씀)
+    // bram_c2_to_pool BMG (단일 IP, Port A: TB, Port B: maxpool)
+    reg          c2pool_ena_a = 1'b0;
+    reg          c2pool_wea_a = 1'b0;
+    reg  [10:0]  c2pool_addra = 11'd0;
+    reg  [127:0] c2pool_dina  = 128'd0;
+
+    wire [10:0]  c2pool_rd_addr;             // physical addr {input_bank_sel, local} (11-bit)
+    wire         c2pool_rd_en;
+    wire signed [127:0] c2pool_rd_data;
+
+    // poolfc 측 (behavioral mem)
     wire [8:0]   poolfc_wr_addr;
     wire         poolfc_wr_en;
     wire [127:0] poolfc_wr_data;
-    reg          poolfc_bank_sel = 1'b0;
 
     //==========================================================================
-    // 3. DUT 인스턴스
+    // BMG IP: bram_c2_to_pool
+    //==========================================================================
+    bram_c2_to_pool c2pool_bmg (
+        .clka  (clk),
+        .ena   (c2pool_ena_a),
+        .wea   (c2pool_wea_a),
+        .addra (c2pool_addra),
+        .dina  (c2pool_dina),
+
+        .clkb  (clk),
+        .enb   (c2pool_rd_en),
+        .addrb (c2pool_rd_addr),               // maxpool 이 physical addr 직접 출력 (single img → bank 0)
+        .doutb (c2pool_rd_data)
+    );
+
+    //==========================================================================
+    // DUT
     //==========================================================================
     maxpool_engine dut (
         .clk             (clk),
@@ -47,34 +91,22 @@ module tb_maxpool_engine;
         .start           (start),
         .done            (done),
 
+        .prior_wdone     (prior_wdone),
+        .succ_rdone      (succ_rdone),
+        .rdone           (rdone),
+        .wdone           (wdone),
+
         .c2pool_rd_addr  (c2pool_rd_addr),
         .c2pool_rd_en    (c2pool_rd_en),
         .c2pool_rd_data  (c2pool_rd_data),
-        .c2pool_bank_sel (c2pool_bank_sel),
 
         .poolfc_wr_addr  (poolfc_wr_addr),
         .poolfc_wr_en    (poolfc_wr_en),
-        .poolfc_wr_data  (poolfc_wr_data),
-        .poolfc_bank_sel (poolfc_bank_sel)
+        .poolfc_wr_data  (poolfc_wr_data)
     );
 
     //==========================================================================
-    // 4. c2pool behavioral BRAM (L=1, 128-bit)
-    //    주소: base(0 or 576) + in_row*24 + in_col
-    //    FSM: phase0에서 주소 요청 → phase1 posedge에서 BRAM이 데이터 드라이브
-    //         → phase2 posedge에서 FSM이 캡처
-    //==========================================================================
-    reg [127:0] c2pool_mem [0:1151];   // bank0: 0~575, bank1: 576~1151
-
-    always @(posedge clk) begin
-        if (c2pool_rd_en)
-            c2pool_rd_data <= c2pool_mem[c2pool_rd_addr];
-    end
-
-    //==========================================================================
-    // 5. poolfc 캡처 버퍼
-    //    poolfc_wr_addr = {poolfc_bank_sel(0), out_addr[7:0]}
-    //    out_addr = out_row*12 + out_col  (0~143)
+    // poolfc behavioral capture mem (단순 RAM, FC layer 미구현)
     //==========================================================================
     reg [127:0] poolfc_mem [0:511];
 
@@ -84,142 +116,140 @@ module tb_maxpool_engine;
     end
 
     //==========================================================================
-    // 6. 검증 버퍼
-    //    python_ref[ch][r] : 채널 ch, 주소 r = row*12 + col
+    // TB-local memory
     //==========================================================================
-    reg [7:0] python_ref [0:15][0:143];
-
-    integer match_count    = 0;
-    integer mismatch_count = 0;
+    reg [127:0] c2pool_data [0:575];           // 576 entry × 128-bit (maxpool input)
+    reg [7:0]   maxpool_ref [0:2303];          // 2304 byte: ch-major (ch0 144 → ch1 144 → ...)
 
     //==========================================================================
-    // 7. conv2_out.hex 로드 → c2pool_mem 패킹
-    //    conv2_out.hex 형식: ch0[0..575], ch1[0..575], ..., ch15[0..575]
-    //    r = row*24 + col
-    //
-    //    c2pool_mem[r][ch*8 +: 8] = 채널 ch, 픽셀 r 값
-    //    (maxpool_fsm rd_addr = base + in_row*24 + in_col 에 맞춤)
+    // Cycle counter
     //==========================================================================
-    reg [7:0] conv2_flat [0:9215];   // 16채널 × 576픽셀
+    integer cycle_cnt;
+    integer cycle_at_prior, cycle_at_done;
 
-    integer ch, r, i;
+    initial cycle_cnt = 0;
+    always @(posedge clk) if (!rst) cycle_cnt <= cycle_cnt + 1;
 
-    task load_c2pool_buffer;
+    //==========================================================================
+    // Task: init_c2pool — write 576 entry × 128-bit to BMG Port A bank 0
+    //==========================================================================
+    task init_c2pool;
+        integer i;
         begin
-            for (i = 0; i < 1152; i = i + 1)
-                c2pool_mem[i] = 128'd0;
+            $display("[TB] @ cycle %0d : init_c2pool start (576 cycle, bank 0)", cycle_cnt);
+            for (i = 0; i < 576; i = i + 1) begin
+                @(negedge clk);
+                c2pool_ena_a = 1'b1;
+                c2pool_wea_a = 1'b1;
+                c2pool_addra = {1'b0, i[9:0]};
+                c2pool_dina  = c2pool_data[i];
+            end
+            @(negedge clk);
+            c2pool_ena_a = 1'b0;
+            c2pool_wea_a = 1'b0;
+            $display("[TB] @ cycle %0d : init_c2pool done", cycle_cnt);
+        end
+    endtask
 
-            for (ch = 0; ch < 16; ch = ch + 1) begin
-                for (r = 0; r < 576; r = r + 1) begin
-                    c2pool_mem[r][ch*8 +: 8] = conv2_flat[ch * 576 + r];
+    //==========================================================================
+    // Task: 1-cycle prior_wdone pulse
+    //==========================================================================
+    task pulse_prior_wdone;
+        begin
+            @(negedge clk); prior_wdone = 1'b1;
+            @(negedge clk); prior_wdone = 1'b0;
+        end
+    endtask
+
+    //==========================================================================
+    // Task: compare_output — poolfc_mem vs maxpool_ref (byte-by-byte, ch-major)
+    //==========================================================================
+    integer total_mm;
+    task compare_output;
+        integer pixel, ch;
+        reg [7:0] got, exp;
+        begin
+            total_mm = 0;
+            $display("[TB] Comparing maxpool output (144 pixel x 16 ch = 2304 byte) ...");
+            for (pixel = 0; pixel < 144; pixel = pixel + 1) begin
+                for (ch = 0; ch < 16; ch = ch + 1) begin
+                    got = poolfc_mem[pixel][ch*8 +: 8];
+                    exp = maxpool_ref[ch*144 + pixel];        // ch-major file order
+                    if (got !== exp) begin
+                        total_mm = total_mm + 1;
+                        if (total_mm <= 10)
+                            $display("  MM @ ch=%0d pixel=%0d : got=%h, exp=%h",
+                                     ch, pixel, got, exp);
+                    end
                 end
             end
         end
     endtask
 
     //==========================================================================
-    // 8. Main
+    // Main stimulus
     //==========================================================================
-    integer fd;
-    integer hw_val, py_val;
-
     initial begin
-        $display("\n====== [START] MaxPool Simulation Setup & File Loading ======");
+        $display("[TB] === Maxpool single-image bit-exact test ===");
+        $display("[TB] Loading c2pool data : %s", `CONV2_OUT_HEX);
+        $readmemh(`CONV2_OUT_HEX,   c2pool_data);
+        $display("[TB] Loading ref output  : %s", `MAXPOOL_REF_HEX);
+        $readmemh(`MAXPOOL_REF_HEX, maxpool_ref);
+        $display("[TB] Loaded c2pool (576 x 128b) + ref (2304 x 8b ch-major)");
 
-        // [8-1] conv2 출력 로드 → c2pool buffer 패킹
-        conv2_flat[0] = 8'hxx;
-        $readmemh("conv2_out.hex", conv2_flat);
-        if (conv2_flat[0] === 8'hxx) begin
-            $display("[FILE ERROR] Failed to load 'conv2_out.hex'!");
-            $finish;
-        end
-        $display("[FILE SUCCESS] 'conv2_out.hex' loaded.");
-        load_c2pool_buffer();
-        $display("[INFO] c2pool buffer packed (24x24 x 16ch -> 128-bit words).");
+        // Reset
+        rst = 1'b1;
+        repeat (10) @(posedge clk);
+        @(negedge clk); rst = 1'b0;
+        $display("[TB] @ cycle %0d : reset released", cycle_cnt);
 
-        // [8-2] Python 레퍼런스 로드
-        python_ref[0][0] = 8'hxx;
-        $readmemh("python_maxpool_ref.hex", python_ref);
-        if (python_ref[0][0] === 8'hxx) begin
-            $display("[FILE ERROR] Failed to load 'python_maxpool_ref.hex'!");
-            $finish;
-        end
-        $display("[FILE SUCCESS] 'python_maxpool_ref.hex' loaded.");
-        $display("=============================================================\n");
+        // Init c2pool BMG bank 0 (Port A driving)
+        init_c2pool();
 
-        // [8-3] 리셋
-        rst = 1;
-        repeat(5) @(posedge clk);
-        rst = 0;
-        repeat(2) @(posedge clk);
+        // Settle for BMG mem write commit
+        repeat (3) @(posedge clk);
 
-        // [8-4] start 펄스
-        @(negedge clk);
-        start = 1;
-        $display("[%0t ns] >> MaxPool Engine Started.", $time);
-        @(negedge clk);
-        start = 0;
+        // Pulse prior_wdone -> maxpool data_ready=true -> IDLE->RUN
+        pulse_prior_wdone();
+        cycle_at_prior = cycle_cnt;
+        $display("[TB] @ cycle %0d : prior_wdone pulsed", cycle_at_prior);
 
-        // [8-5] done 대기
-        wait (done == 1'b1);
-        repeat(3) @(posedge clk);
+        // Wait done
+        @(posedge done);
+        cycle_at_done = cycle_cnt;
+        $display("[TB] @ cycle %0d : done received (compute %0d cycles)",
+                 cycle_at_done, cycle_at_done - cycle_at_prior);
 
-        $display("[%0t ns] -> done detected. Running verification...", $time);
+        // Settle for poolfc mem write
+        repeat (3) @(posedge clk);
 
-        // [8-6] poolfc_mem vs python_ref 비교
-        //   poolfc_wr_addr = {poolfc_bank_sel(0), out_addr}
-        //   out_addr = out_row*12 + out_col  (r = 0~143)
-        //   poolfc_mem[r][ch*8 +: 8] = 채널 ch, 픽셀 r
-        for (ch = 0; ch < 16; ch = ch + 1) begin
-            for (r = 0; r < 144; r = r + 1) begin
-                hw_val = poolfc_mem[r][ch*8 +: 8];
-                py_val = python_ref[ch][r];
+        // Compare
+        compare_output();
 
-                if (hw_val === py_val) begin
-                    match_count = match_count + 1;
-                end else begin
-                    mismatch_count = mismatch_count + 1;
-                    $display("[MISMATCH] Ch:%02d Addr:%3d(row=%0d,col=%0d) | HW:%02x != PY:%02x",
-                             ch, r, r/12, r%12, hw_val, py_val);
-                end
-            end
-        end
+        // Report
+        $display("");
+        $display("================================================");
+        $display("  Maxpool single-image testbench result");
+        $display("================================================");
+        $display("  prior_wdone   @ cycle %0d", cycle_at_prior);
+        $display("  done          @ cycle %0d", cycle_at_done);
+        $display("  compute       : %0d cycles", cycle_at_done - cycle_at_prior);
+        $display("  mismatches    : %0d / 2304", total_mm);
+        if (total_mm == 0)
+            $display("  *** PASS *** (bit-exact match)");
+        else
+            $display("  *** FAIL ***");
+        $display("================================================");
 
-        // [8-7] 최종 리포트
-        $display("\n==================================================");
-        $display("          MaxPool H/W vs Python Report            ");
-        $display("==================================================");
-        $display("  - MATCH COUNT    : %0d / 2304", match_count);
-        $display("  - MISMATCH COUNT : %0d / 2304", mismatch_count);
-        $display("--------------------------------------------------");
-        if (mismatch_count == 0 && match_count == 2304) begin
-            $display("  >> [PASS] H/W results match Python 100%% perfectly!");
-        end else begin
-            $display("  >> [FAIL] Errors detected! Please check the waveforms.");
-        end
-        $display("==================================================\n");
-
-        // [8-8] HW 출력 저장
-        fd = $fopen("maxpool_out.hex", "w");
-        for (ch = 0; ch < 16; ch = ch + 1) begin
-            for (r = 0; r < 144; r = r + 1) begin
-                $fwrite(fd, "%02x\n", poolfc_mem[r][ch*8 +: 8] & 8'hFF);
-            end
-        end
-        $fclose(fd);
-        $display("=== 'maxpool_out.hex' saved successfully. ===");
-
-        #50;
         $finish;
     end
 
     //==========================================================================
-    // 9. Watchdog Timeout
-    //    144픽셀 × 6phase = 864 cycles + flush 6 + margin → 200us 충분
+    // Timeout
     //==========================================================================
     initial begin
-        #200000;
-        $display("[TIMEOUT ERROR] done not asserted within 200us.");
+        #100000;     // 10,000 cycle @ 100 MHz — sequential maxpool ~870 cycle + init
+        $display("[TB] !!! TIMEOUT @ cycle %0d !!!", cycle_cnt);
         $finish;
     end
 

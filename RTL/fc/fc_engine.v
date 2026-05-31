@@ -4,9 +4,18 @@
 // Description:
 //   FC layer engine for channel-major packed input.
 //
-//   Input BRAM:
+//   Handshake (conv2 패턴 정합):
+//     prior_wdone : maxpool 의 wdone direct wire (입력 image 준비 알림)
+//     rdone       : FC 가 poolfc bank read 완료 1-cycle pulse
+//     input_bank_sel : 내부 toggle FF, rdone 시 토글 (ping-pong)
+//     start       : legacy system arm pulse (init 용 backup, 이후 handshake 자동)
+//   FC 는 terminal layer 이므로 output 측 handshake (succ_rdone, wdone, output_bank_sel)
+//   없음. argmax 결과는 class_idx / class_valid 로 직출.
+//
+//   Input BRAM (poolfc):
 //     width = 128-bit = 16ch * 8-bit
-//     depth = 144 spatial words
+//     depth = 512 = 2 bank * 256 (144 만 유효, 나머지 padding)
+//     addr  = {input_bank_sel, s_cnt[7:0]}   — maxpool 의 write 포맷과 일치
 //     one address contains all 16 channels for the same spatial position
 //
 //   Weight BRAM:
@@ -38,10 +47,11 @@ module fc_engine #(
 
     //==========================================================================
     // poolfc buffer read port
-    // 128-bit x 144 per bank, 1-cycle read latency
+    //   128-bit × 512 (2 bank × 256), 1-cycle read latency.
+    //   addr = {input_bank_sel, s_cnt[7:0]} — bank=0: 0..143, bank=1: 256..399.
     //==========================================================================
     output wire         poolfc_re,
-    output wire [9:0]   poolfc_addr,
+    output wire [8:0]   poolfc_addr,         // {input_bank_sel, s_cnt[7:0]}
     input  wire [127:0] poolfc_dout,
 
     //==========================================================================
@@ -86,15 +96,18 @@ module fc_engine #(
     );
 
     //==========================================================================
-    // 2. Input BRAM address
-    // If there is no ping-pong bank, use only fsm_s_cnt in the connected memory.
-    // If two banks are stored in one BRAM, this maps:
-    //   bank0: 0..143
-    //   bank1: 144..287
+    // 2. Input BRAM address (poolfc)
+    //
+    //   Bank format: {bank_sel, s_cnt[7:0]} — 9-bit, top bit = bank.
+    //     bank=0 : addr {0, 0}..{0, 143} = 0..143
+    //     bank=1 : addr {1, 0}..{1, 143} = 256..399
+    //
+    //   ★ maxpool 의 poolfc_wr_addr = {output_bank_sel, out_addr[7:0]} 와 동일 포맷.
+    //   이전엔 `(bank ? (144 + s_cnt) : s_cnt)` 였는데 (144..287) maxpool 의 write
+    //   range (256..399) 와 mismatch → bank 1 read 시 빈 영역에서 0 만 읽음.
     //==========================================================================
     assign poolfc_re   = fsm_comp_v;
-    assign poolfc_addr = (fsm_input_bank_sel) ? (10'd144 + {2'd0, fsm_s_cnt})
-                                              : ({2'd0, fsm_s_cnt});
+    assign poolfc_addr = {fsm_input_bank_sel, fsm_s_cnt};
 
     //==========================================================================
     // 3. Weight BRAM, 256-bit x 720, 1-cycle read latency
@@ -104,7 +117,8 @@ module fc_engine #(
 
     fc_weight_bram fcw_bmg_inst (
         .clka   (clk),
-        .wea    (fcw_ena),
+        .ena    (fcw_ena),                 // ★ ENA + WEA 둘 다 결선 필수
+        .wea    (fcw_ena),                 //   (conv2_weight_bram 의 ENA 누락 버그와 동일 원인 예방)
         .addra  (fcw_addra),
         .dina   (fcw_dina),
 
@@ -123,19 +137,32 @@ module fc_engine #(
     //==========================================================================
     // 4. Valid/control alignment
     //
-    // Timeline for an issued spatial word at cycle T:
-    //   T+1 : input/weight BRAM dout valid       -> PE samples
-    //   T+2 : PE output register updated
-    //   T+3 : adder stage1 samples PE output
-    //   T+6 : adder final sum register updated
-    //   T+7 : accumulator samples final sum
+    // PE 는 공용 core/pe_cell (DSP 3-stage + 출력 reg = 4-cycle latency).
+    // Timeline for an issued spatial word at cycle T (BRAM L=1):
+    //   T+1 : BRAM doutb valid           — PE x/packed_w inputs valid (combinational)
+    //   T+2 : DSP A/B latch              — pe_en @ T+1 = 1 필요
+    //   T+3 : DSP M latch                — pe_en @ T+2 = 1 필요
+    //   T+4 : DSP P latch                — pe_en @ T+3 = 1 필요
+    //   T+5 : PE 출력 reg (mul0/mul1)    — pe_en @ T+4 = 1 필요
+    //   T+6 : adder stage1 reg (e1)      — adder_en @ T+5 = 1 필요
+    //   T+7 : adder stage2 reg (e2)
+    //   T+8 : adder stage3 reg (e3)
+    //   T+9 : adder stage4 reg (sum0/1)  — adder_en @ T+8 = 1 필요
+    //   T+10: accumulator update         — acc_en @ T+9 = 1 필요
     //
-    // Therefore:
-    //   pe_en     = comp_v delayed 1
-    //   adder_en  = comp_v delayed 3
-    //   acc_ctrl  = comp_v/first/last/pair delayed 7
+    // comp_pipe[k] @ cycle C = fsm_comp_v @ cycle (C-k-1) (1-cycle 등록 지연부터).
+    // 따라서 (index k = X-(T+1)):
+    //   pe_en    = comp_pipe[0] | comp_pipe[1] | comp_pipe[2]
+    //                          | comp_pipe[3]                    (covers T+1..T+4)
+    //   adder_en = comp_pipe[4] | comp_pipe[5] | comp_pipe[6]
+    //                          | comp_pipe[7]                    (covers T+5..T+8)
+    //   acc_en/clear/last/pair = *_pipe[8]                       (covers T+9)
+    //
+    // 주의: accumulator 의 logit 캡처는 "acc + sum" 형태로 마지막 spatial 포함.
+    // (RTL/fc/fc_accumulator.v 의 last=1 branch 참조; sp(last) 가 acc0_OLD 에
+    //  아직 없을 때도 combinational add 로 logit 에 반영.)
     //==========================================================================
-    localparam CTRL_DELAY = 7;
+    localparam CTRL_DELAY = 8;
 
     reg [CTRL_DELAY:0] comp_pipe;
     reg [CTRL_DELAY:0] first_pipe;
@@ -165,8 +192,8 @@ module fc_engine #(
         end
     end
 
-    wire pe_en    = comp_pipe[1] | comp_pipe[2];
-    wire adder_en = comp_pipe[3] | comp_pipe[4] | comp_pipe[5] | comp_pipe[6]; 
+    wire pe_en    = comp_pipe[0] | comp_pipe[1] | comp_pipe[2] | comp_pipe[3];
+    wire adder_en = comp_pipe[4] | comp_pipe[5] | comp_pipe[6] | comp_pipe[7];
 
     wire       acc_en    = comp_pipe [CTRL_DELAY];
     wire       acc_clear = first_pipe[CTRL_DELAY];
@@ -229,7 +256,7 @@ module fc_engine #(
     //==========================================================================
     // 8. Logit collection
     //
-    // acc_pair = pair_pipe[7] 는 logit_valid 가 출력되는 사이클(T+1)에
+    // acc_pair = pair_pipe[CTRL_DELAY] 는 logit_valid 가 출력되는 사이클(T+1)에
     // 이미 다음 pair 값으로 시프트되어 있다.
     // acc_last pulse 가 뜨는 사이클(T)의 acc_pair 가 진짜 현재 pair 이므로
     // 그 값을 래치하여 logit_reg 인덱스로 사용한다.

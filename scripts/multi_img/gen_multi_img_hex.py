@@ -1,15 +1,14 @@
 """
 gen_multi_img_hex.py
 ====================
-Multi-image hex 데이터 생성 — Conv2 engine 의 multi-image / single-image testbench 용.
+Multi-image hex 데이터 생성 — Conv1+Conv2 integration / Conv2 standalone testbench 용.
 
-MNIST input 0..N-1 (default 100 image) 에 대해 Conv1 + Conv2 forward 를 거쳐:
-  - imgXXX_c1c2.hex   : Conv2 입력 데이터 (= Conv1 output), **1024 lines × 64-bit (padded)**
-  - imgXXX_c2pool.hex : Conv2 expected output, 576 lines × 128-bit
-  - all_c1c2.hex      : 100 × 1024 = 102,400 lines (concatenated)
-  - all_c2pool.hex    : 100 × 576  = 57,600  lines (concatenated)
-
-per-image file (Option B). Testbench 가 file 단위로 image index 별 load.
+MNIST input 0..N-1 (default 100 image) 에 대해 Conv1 + Conv2 + Maxpool(2x2) forward 를 거쳐
+concatenated big-file 만 dump (multi_img TB 의 $readmemh 용):
+  - all_input.hex     : 100 × 784  = 78,400  lines × 8-bit
+  - all_c1c2.hex      : 100 × 1024 = 102,400 lines × 64-bit
+  - all_c2pool.hex    : 100 × 576  = 57,600  lines × 128-bit
+  - all_maxpool.hex   : 100 × 144  = 14,400  lines × 128-bit
 
 Hex 포맷:
   c1c2 (64-bit, 16 hex chars/line, **padded h*32+w**):
@@ -76,6 +75,13 @@ def conv2d_int8(x_int8, w_int8, shift=10):
     return np.maximum(sat, 0).astype(np.int8)  # ReLU
 
 
+def maxpool_2x2(x_int8):
+    """2x2 max pool (stride 2, no overlap). (N, C, H, W) → (N, C, H/2, W/2). int8."""
+    N, C, H, W = x_int8.shape
+    assert H % 2 == 0 and W % 2 == 0
+    return x_int8.reshape(N, C, H // 2, 2, W // 2, 2).max(axis=(3, 5)).astype(np.int8)
+
+
 # ---------------------------------------------------------------------------
 # Packing helpers
 # ---------------------------------------------------------------------------
@@ -115,6 +121,24 @@ def build_c2pool_compact(fmap2, img_idx):
     return compact
 
 
+def build_maxpool_compact(fmap3, img_idx):
+    """144 entries × 128-bit, h*12+w 순서 (poolfc BMG write_addr sequential)."""
+    compact = [0] * 144
+    for h in range(12):
+        for w in range(12):
+            compact[h * 12 + w] = pack_16oc(fmap3, img_idx, h, w)
+    return compact
+
+
+def build_input_bytes(inp_arr, img_idx):
+    """784 byte (28×28) raster scan order. Used by Conv1's bram_input Port B read.
+
+    Returns list[784] of int (0..255).
+    """
+    flat = inp_arr[img_idx, 0].reshape(-1)   # (784,), int8
+    return [int(b) & 0xFF for b in flat]
+
+
 # ---------------------------------------------------------------------------
 # Load
 # ---------------------------------------------------------------------------
@@ -145,36 +169,28 @@ print(f"  fmap1 (Conv1 output): shape={fmap1.shape}, range=[{fmap1.min()}, {fmap
 fmap2 = conv2d_int8(fmap1, w2)      # (N, 16, 24, 24)
 print(f"  fmap2 (Conv2 output): shape={fmap2.shape}, range=[{fmap2.min()}, {fmap2.max()}]")
 
+fmap3 = maxpool_2x2(fmap2)          # (N, 16, 12, 12)
+print(f"  fmap3 (Maxpool output): shape={fmap3.shape}, range=[{fmap3.min()}, {fmap3.max()}]")
+
 # ---------------------------------------------------------------------------
 # Per-image hex 출력
 # ---------------------------------------------------------------------------
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-print(f"\n[Write] per-image hex → {OUTPUT_DIR}/img{{idx:03d}}_{{c1c2,c2pool}}.hex")
-print(f"        c1c2  : {C1C2_BANK_DEPTH} lines × 64-bit (padded h*32+w, BMG bank format)")
-print(f"        c2pool: 576 lines × 128-bit (compact h*24+w)")
-
-for img_idx in range(N_IMAGES):
-    c1c2 = build_c1c2_padded(fmap1, img_idx)
-    with open(os.path.join(OUTPUT_DIR, f"img{img_idx:03d}_c1c2.hex"), "w") as f:
-        for word in c1c2:
-            f.write(f"{word:016X}\n")
-
-    c2pool = build_c2pool_compact(fmap2, img_idx)
-    with open(os.path.join(OUTPUT_DIR, f"img{img_idx:03d}_c2pool.hex"), "w") as f:
-        for word in c2pool:
-            f.write(f"{word:032X}\n")
-
-    if (img_idx + 1) % 20 == 0:
-        print(f"  ... {img_idx + 1} / {N_IMAGES}")
-
-print(f"  {N_IMAGES * 2} per-image files done")
 
 # ---------------------------------------------------------------------------
 # Concatenated big files (multi_img TB 의 $readmemh 용, V2001 호환)
+#   all_input.hex  : N × 784  =  78,400 lines × 8-bit
 #   all_c1c2.hex   : N × 1024 = 102,400 lines × 64-bit
 #   all_c2pool.hex : N × 576  =  57,600 lines × 128-bit
 # ---------------------------------------------------------------------------
-print(f"\n[Write] concatenated big-files (V2001-compatible $readmemh)")
+print(f"\n[Write] concatenated big-files (V2001-compatible $readmemh) → {OUTPUT_DIR}")
+
+all_input_path = os.path.join(OUTPUT_DIR, "all_input.hex")
+with open(all_input_path, "w") as f:
+    for img_idx in range(N_IMAGES):
+        for byte in build_input_bytes(images, img_idx):
+            f.write(f"{byte:02X}\n")
+print(f"  {all_input_path}  ({N_IMAGES * 784} lines, 8-bit)")
 
 all_c1c2_path = os.path.join(OUTPUT_DIR, "all_c1c2.hex")
 with open(all_c1c2_path, "w") as f:
@@ -189,5 +205,12 @@ with open(all_c2pool_path, "w") as f:
         for word in build_c2pool_compact(fmap2, img_idx):
             f.write(f"{word:032X}\n")
 print(f"  {all_c2pool_path}  ({N_IMAGES * 576} lines, 128-bit)")
+
+all_maxpool_path = os.path.join(OUTPUT_DIR, "all_maxpool.hex")
+with open(all_maxpool_path, "w") as f:
+    for img_idx in range(N_IMAGES):
+        for word in build_maxpool_compact(fmap3, img_idx):
+            f.write(f"{word:032X}\n")
+print(f"  {all_maxpool_path}  ({N_IMAGES * 144} lines, 128-bit)")
 
 print(f"\n[Done]")
