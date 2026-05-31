@@ -23,15 +23,15 @@
 //     bank_sel = i & 1 (ping-pong, 2-bank 활용은 하지만 동시 처리 X)
 //////////////////////////////////////////////////////////////////////////////////
 
-`define ALL_INPUT_HEX   "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_input.hex"
-`define ALL_C2POOL_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_c2pool.hex"
-`define WEIGHT1_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv1_weights_simd.hex"
-`define WEIGHT2_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_weights_simd.hex"
+`define ALL_INPUT_HEX   "C:/Users/111eh/INTELLIGENT_SYSTEM_DESIGN/assign4_code/CNN_Accelerator/data/multi_img/all_input.hex"
+`define ALL_C2POOL_HEX  "C:/Users/111eh/INTELLIGENT_SYSTEM_DESIGN/assign4_code/CNN_Accelerator/data/multi_img/all_c2pool.hex"
+`define WEIGHT1_HEX     "C:/Users/111eh/INTELLIGENT_SYSTEM_DESIGN/assign4_code/CNN_Accelerator/data/weights_simd/conv1_weights_simd.hex"
+`define WEIGHT2_HEX     "C:/Users/111eh/INTELLIGENT_SYSTEM_DESIGN/assign4_code/CNN_Accelerator/data/weights_simd/conv2_weights_simd.hex"
 
 
 module tb_conv1_conv2_multi;
 
-    parameter N_IMAGES = 40;
+    parameter N_IMAGES = 100;
 
     //==========================================================================
     // Clock / reset (100 MHz)
