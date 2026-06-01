@@ -30,8 +30,8 @@
 
 // 데이터 경로는 다른 TB(tb_conv1_conv2_maxpool_multi 등)와 동일 베이스로 통일.
 //   C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/
-`define POOLFC_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/maxpool_output.hex"
-`define FCW_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/fc_weights_simd.hex"
+`define POOLFC_HEX  "C:\Users\111eh\INTELLIGENT_SYSTEM_DESIGN\assign4_code\CNN_Accelerator\data\single_img\maxpool_output.hex"
+`define FCW_HEX     "C:\Users\111eh\INTELLIGENT_SYSTEM_DESIGN\assign4_code\CNN_Accelerator\data\weights_simd\fc_weights_simd.hex"
 
 
 module tb_fc_engine;
@@ -372,40 +372,3 @@ module tb_fc_engine;
 endmodule
 
 
-//==============================================================================
-// fc_weight_bram behavioral model
-//   Simple Dual-Port, 256-bit × 1024 (BMG spec depth; 720 entries 사용).
-//   Port A: write only — ENA + WEA 둘 다 결선 필요 (실제 BMG 거동과 일치).
-//   Port B: read with L=1 (Primitive Output Register Disable).
-//
-//   ★ Vivado 프로젝트에 실제 fc_weight_bram BMG IP 가 있으면 이 module 을
-//     주석 처리하거나 다른 파일로 분리하세요 (duplicate 정의 충돌 방지).
-//==============================================================================
-module fc_weight_bram (
-    input  wire         clka,
-    input  wire         ena,
-    input  wire         wea,
-    input  wire [9:0]   addra,
-    input  wire [255:0] dina,
-
-    input  wire         clkb,
-    input  wire         enb,
-    input  wire [9:0]   addrb,
-    output reg  [255:0] doutb
-);
-    reg [255:0] mem [0:1023];
-
-    integer mi;
-    initial begin
-        for (mi = 0; mi < 1024; mi = mi + 1) mem[mi] = 256'd0;
-        doutb = 256'd0;
-    end
-
-    always @(posedge clka) begin
-        if (ena && wea) mem[addra] <= dina;
-    end
-
-    always @(posedge clkb) begin
-        if (enb) doutb <= mem[addrb];
-    end
-endmodule
