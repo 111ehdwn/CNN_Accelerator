@@ -17,16 +17,16 @@
 //     compare_process    : @posedge maxpool.wdone → compare poolfc bank (i&1) → pulse maxpool.succ_rdone
 //
 //   Handshake wiring (4-way, 직접 wire 가능한 부분):
-//     conv1.wdone   → conv2.prior_wdone     (direct wire — c1c2 write 완료 알림)
-//     conv2.rdone   → conv1.succ_rdone      (direct wire — c1c2 read 완료 알림)
-//     conv2.wdone   → maxpool.prior_wdone   (direct wire — c2pool write 완료 알림)
-//     maxpool.rdone → conv2.succ_rdone      (direct wire — c2pool read 완료 알림)
+//     conv1.wdone   → conv2.prior_wdone     (direct wire - c1c2 write 완료 알림)
+//     conv2.rdone   → conv1.succ_rdone      (direct wire - c1c2 read 완료 알림)
+//     conv2.wdone   → maxpool.prior_wdone   (direct wire - c2pool write 완료 알림)
+//     maxpool.rdone → conv2.succ_rdone      (direct wire - c2pool read 완료 알림)
 //     conv1.prior_wdone : TB pulses per image (input image ready 신호)
 //     maxpool.wdone → TB wait → compare → maxpool.succ_rdone (가상 FC 역할)
 //
 //   ping-pong bank (모두 race-free):
 //     conv1 input/output bank = conv1 내부 toggle FF (옵션 B 적용 후 RTL 측에서 관리)
-//     conv2 자체 bank         = 자동 (fsm_input_bank_sel, fsm_output_bank_sel — 내부 counter)
+//     conv2 자체 bank         = 자동 (fsm_input_bank_sel, fsm_output_bank_sel - 내부 counter)
 //     c2pool read bank        = maxpool 내부 input_bank_sel toggle FF (RTL 표준화)
 //     poolfc write bank       = maxpool 내부 output_bank_sel toggle FF (RTL 표준화)
 //     bram_input write bank   = write_input task 내부 local `bank = img_idx[0]`
@@ -36,15 +36,15 @@
 //     bram_input, conv1_weight_bram, bram_c1_to_c2, conv2_weight_bram, bram_c2_to_pool
 //////////////////////////////////////////////////////////////////////////////////
 
-`define ALL_INPUT_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_input.hex"
-`define ALL_MAXPOOL_HEX   "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_maxpool.hex"
-`define CONV1_WEIGHT_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv1_weights_simd.hex"
-`define CONV2_WEIGHT_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_weights_simd.hex"
+`define ALL_INPUT_HEX     "C:\Users\111eh\INTELLIGENT_SYSTEM_DESIGN\assign4_code\CNN_Accelerator\data\multi_img\all_input.hex"
+`define ALL_MAXPOOL_HEX   "C:\Users\111eh\INTELLIGENT_SYSTEM_DESIGN\assign4_code\CNN_Accelerator\data\multi_img\all_maxpool.hex"
+`define CONV1_WEIGHT_HEX  "C:\Users\111eh\INTELLIGENT_SYSTEM_DESIGN\assign4_code\CNN_Accelerator\data\weights_simd\conv1_weights_simd.hex"
+`define CONV2_WEIGHT_HEX  "C:\Users\111eh\INTELLIGENT_SYSTEM_DESIGN\assign4_code\CNN_Accelerator\data\weights_simd\conv2_weights_simd.hex"
 
 
 module tb_conv1_conv2_maxpool_multi;
 
-    parameter N_IMAGES = 40;
+    parameter N_IMAGES = 100;
 
     //==========================================================================
     // Clock / reset (100 MHz, all-DUT active-high rst 통일)
@@ -58,7 +58,7 @@ module tb_conv1_conv2_maxpool_multi;
     //==========================================================================
     reg          conv1_start    = 1'b0;
     reg          conv2_start    = 1'b0;
-    reg          maxpool_start  = 1'b0;          // legacy (사용 X — prior_wdone 으로 trigger)
+    reg          maxpool_start  = 1'b0;          // legacy (사용 X - prior_wdone 으로 trigger)
     wire         conv1_done;
     wire         maxpool_done;                   // legacy
 
@@ -69,7 +69,7 @@ module tb_conv1_conv2_maxpool_multi;
     reg          conv1_prior_wdone   = 1'b0;     // TB pulses per image (Conv1 trigger)
     reg          maxpool_succ_rdone  = 1'b0;     // TB pulses (after compare, 가상 FC)
 
-    // ping-pong bank for conv1 측 — 이제 conv1 내부 toggle FF (옵션 B) 로 관리.
+    // ping-pong bank for conv1 측 - 이제 conv1 내부 toggle FF (옵션 B) 로 관리.
     //   conv1_engine_2.v 가 rdone / wdone 에 자체 토글하므로 TB driving 불필요.
     //   bram_input write bank 는 write_input 내부에서 local `bank = img_idx[0]` 사용.
 
@@ -125,7 +125,7 @@ module tb_conv1_conv2_maxpool_multi;
     // Counters (handshake-tracked, used for ping-pong bank derivation + backpressure)
     //==========================================================================
     integer conv1_rdone_count    = 0;          // dispatcher backpressure (옵션 B 후 bank derive 용도 제거)
-    integer conv1_wdone_count    = 0;          // 통계/debug 용 — 옵션 B 후 bank derive 미사용
+    integer conv1_wdone_count    = 0;          // 통계/debug 용 - 옵션 B 후 bank derive 미사용
     integer conv2_rdone_count    = 0;
     integer maxpool_rdone_count  = 0;          // 통계/debug (bank derive 는 maxpool 내부로 이동)
     integer maxpool_wdone_count  = 0;          // 통계/debug (bank derive 는 maxpool 내부로 이동)
@@ -153,7 +153,7 @@ module tb_conv1_conv2_maxpool_multi;
     //     conv1   : 내부 input_bank_sel / bank_sel toggle FF
     //     conv2   : 내부 fsm_input_bank_sel / fsm_output_bank_sel
     //     maxpool : 내부 input_bank_sel (c2pool read) / output_bank_sel (poolfc write)
-    //               — 표준화 후 maxpool 이 physical addr 을 직접 내보냄.
+    //               - 표준화 후 maxpool 이 physical addr 을 직접 내보냄.
     //   따라서 c2pool / poolfc BMG 는 dumb 2-bank memory 로만 동작.
 
     //==========================================================================
@@ -193,7 +193,7 @@ module tb_conv1_conv2_maxpool_multi;
     // DUT 1: Conv1 (active-high rst, 4-way handshake)
     //   prior_wdone : TB pulse per image (image-by-image trigger)
     //   succ_rdone  : conv2.rdone direct wire (c1c2 read 완료 알림)
-    //   rdone       : conv1.rdone (input read 완료) — TB monitors for backpressure
+    //   rdone       : conv1.rdone (input read 완료) - TB monitors for backpressure
     //   wdone       : conv1.wdone → conv2.prior_wdone direct wire (NO TB bridge)
     //==========================================================================
     conv1_engine conv1 (
@@ -207,7 +207,7 @@ module tb_conv1_conv2_maxpool_multi;
         .rdone          (conv1_rdone),
         .wdone          (conv1_wdone),
 
-        // input_bank_sel / bank_sel 은 conv1 내부 toggle FF (옵션 B) — port 제거됨
+        // input_bank_sel / bank_sel 은 conv1 내부 toggle FF (옵션 B) - port 제거됨
 
         .in_bram_addr   (in_addrb),
         .in_bram_en     (in_enb),
@@ -277,7 +277,7 @@ module tb_conv1_conv2_maxpool_multi;
     );
 
     //==========================================================================
-    // poolfc behavioral capture mem (FC 미구현 — 2 bank × 256 = 512 depth)
+    // poolfc behavioral capture mem (FC 미구현 - 2 bank × 256 = 512 depth)
     //==========================================================================
     reg [127:0] poolfc_mem [0:511];
 
@@ -497,7 +497,7 @@ module tb_conv1_conv2_maxpool_multi;
         @(negedge clk);
 
         for (i_conv1 = 0; i_conv1 < N_IMAGES; i_conv1 = i_conv1 + 1) begin
-            // Backpressure: input bram ping-pong 2-bank — conv1 의 image i-2 read 완료 후 i 시작
+            // Backpressure: input bram ping-pong 2-bank - conv1 의 image i-2 read 완료 후 i 시작
             wait ((i_conv1 - conv1_rdone_count) < 2);
 
             // Write input to bram_input bank (bank = i_conv1[0])
@@ -505,14 +505,14 @@ module tb_conv1_conv2_maxpool_multi;
             //   TB 가 i_conv1[0] 으로 write 하면 conv1 의 read bank 와 자동 sync.
             write_input(i_conv1);
 
-            // Pulse conv1 prior_wdone — image trigger (자동 handshake chain)
+            // Pulse conv1 prior_wdone - image trigger (자동 handshake chain)
             cycle_at_img_start[i_conv1] = cycle_cnt;
             pulse_conv1_prior_wdone();
         end
     end
 
     //==========================================================================
-    // PROCESS 3: Compare (가상 FC) — @maxpool.wdone → compare → pulse maxpool.succ_rdone
+    // PROCESS 3: Compare (가상 FC) - @maxpool.wdone → compare → pulse maxpool.succ_rdone
     //==========================================================================
     integer i_cmp;
     initial begin : compare_process
