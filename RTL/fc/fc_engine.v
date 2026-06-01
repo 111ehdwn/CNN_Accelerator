@@ -129,41 +129,54 @@ module fc_engine #(
         .doutb  (fcw_doutb)
     );
 
+    // ★ poolfc_bmg 에 output primitive register 추가 → poolfc_dout read latency L=1→2.
+    //   fc_weight_bram 은 L=1 이라, DSP 에서 x(poolfc, T+2)·weight 정렬을 맞추려면
+    //   weight 출력을 fabric register 1 단(fcw_doutb_r)으로 받아 둘 다 T+2 에 도착시킨다.
+    //   이 단은 정렬뿐 아니라 weight read 의 300MHz 타이밍도 닫는다: 느린 BRAM
+    //   clock-to-out(L=1, ~2.x ns)을 BRAM 인접 fabric FF 로 끊어, 이후 DSP 까지는
+    //   fresh cycle 로 보낸다. (배치상 fcw_doutb_r 은 weight BRAM 근처에 두는 것이 유리.)
+    reg [255:0] fcw_doutb_r;
+    always @(posedge clk) begin
+        if (rst) fcw_doutb_r <= 256'd0;
+        else     fcw_doutb_r <= fcw_doutb;
+    end
+
     // User-defined packing:
     //   MSB side = odd column  16 weights
     //   LSB side = even column 16 weights
-    wire [127:0] w_even_flat = fcw_doutb[127:0];
-    wire [127:0] w_odd_flat  = fcw_doutb[255:128];
+    wire [127:0] w_even_flat = fcw_doutb_r[127:0];
+    wire [127:0] w_odd_flat  = fcw_doutb_r[255:128];
 
     //==========================================================================
     // 4. Valid/control alignment
     //
     // PE 는 공용 core/pe_cell (DSP 3-stage + 출력 reg = 4-cycle latency).
-    // Timeline for an issued spatial word at cycle T (BRAM L=1):
-    //   T+1 : BRAM doutb valid           — PE x/packed_w inputs valid (combinational)
-    //   T+2 : DSP A/B latch              — pe_en @ T+1 = 1 필요
-    //   T+3 : DSP M latch                — pe_en @ T+2 = 1 필요
-    //   T+4 : DSP P latch                — pe_en @ T+3 = 1 필요
-    //   T+5 : PE 출력 reg (mul0/mul1)    — pe_en @ T+4 = 1 필요
-    //   T+6 : adder stage1 reg (e1)      — adder_en @ T+5 = 1 필요
-    //   T+7 : adder stage2 reg (e2)
-    //   T+8 : adder stage3 reg (e3)
-    //   T+9 : adder stage4 reg (sum0/1)  — adder_en @ T+8 = 1 필요
-    //   T+10: accumulator update         — acc_en @ T+9 = 1 필요
+    // Timeline for an issued spatial word at cycle T
+    //   (poolfc L=2: output primitive register / weight L=1 + fcw_doutb_r → 둘 다 T+2 도착):
+    //   T+2 : x(poolfc_dout) & weight(fcw_doutb_r) valid — PE inputs valid (combinational)
+    //   T+3 : DSP A/B latch              — pe_en @ T+2 = 1 필요
+    //   T+4 : DSP M latch                — pe_en @ T+3 = 1 필요
+    //   T+5 : DSP P latch                — pe_en @ T+4 = 1 필요
+    //   T+6 : PE 출력 reg (mul0/mul1)    — pe_en @ T+5 = 1 필요
+    //   T+7 : adder stage1 reg (e1)      — adder_en @ T+6 = 1 필요
+    //   T+8 : adder stage2 reg (e2)
+    //   T+9 : adder stage3 reg (e3)
+    //   T+10: adder stage4 reg (sum0/1)  — adder_en @ T+9 = 1 필요
+    //   T+11: accumulator update         — acc_en @ T+10 = 1 필요
     //
     // comp_pipe[k] @ cycle C = fsm_comp_v @ cycle (C-k-1) (1-cycle 등록 지연부터).
-    // 따라서 (index k = X-(T+1)):
-    //   pe_en    = comp_pipe[0] | comp_pipe[1] | comp_pipe[2]
-    //                          | comp_pipe[3]                    (covers T+1..T+4)
-    //   adder_en = comp_pipe[4] | comp_pipe[5] | comp_pipe[6]
-    //                          | comp_pipe[7]                    (covers T+5..T+8)
-    //   acc_en/clear/last/pair = *_pipe[8]                       (covers T+9)
+    // poolfc 출력 register(L=2)로 데이터가 기존 L=1 대비 +1 늦으므로 모든 tap +1 시프트:
+    //   pe_en    = comp_pipe[1] | comp_pipe[2] | comp_pipe[3]
+    //                          | comp_pipe[4]                    (covers T+2..T+5)
+    //   adder_en = comp_pipe[5] | comp_pipe[6] | comp_pipe[7]
+    //                          | comp_pipe[8]                    (covers T+6..T+9)
+    //   acc_en/clear/last/pair = *_pipe[9]                       (covers T+10)
     //
     // 주의: accumulator 의 logit 캡처는 "acc + sum" 형태로 마지막 spatial 포함.
     // (RTL/fc/fc_accumulator.v 의 last=1 branch 참조; sp(last) 가 acc0_OLD 에
     //  아직 없을 때도 combinational add 로 logit 에 반영.)
     //==========================================================================
-    localparam CTRL_DELAY = 8;
+    localparam CTRL_DELAY = 9;   // poolfc output register(L=2) 반영: 기존 8 +1
 
     reg [CTRL_DELAY:0] comp_pipe;
     reg [CTRL_DELAY:0] first_pipe;
@@ -193,8 +206,8 @@ module fc_engine #(
         end
     end
 
-    wire pe_en    = comp_pipe[0] | comp_pipe[1] | comp_pipe[2] | comp_pipe[3];
-    wire adder_en = comp_pipe[4] | comp_pipe[5] | comp_pipe[6] | comp_pipe[7];
+    wire pe_en    = comp_pipe[1] | comp_pipe[2] | comp_pipe[3] | comp_pipe[4];
+    wire adder_en = comp_pipe[5] | comp_pipe[6] | comp_pipe[7] | comp_pipe[8];
 
     wire       acc_en    = comp_pipe [CTRL_DELAY];
     wire       acc_clear = first_pipe[CTRL_DELAY];

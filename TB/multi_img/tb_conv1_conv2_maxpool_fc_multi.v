@@ -316,9 +316,13 @@ module tb_conv1_conv2_maxpool_fc_multi;
             poolfc_mem[poolfc_wr_addr] <= poolfc_wr_data;
     end
 
+    // L=2: core read register (ENB) + output primitive register (REGCEB tied 1).
+    //   ★ 출력 reg 는 ENB 게이팅 금지 — 마지막 read (pair4 sp143) 직후 ENB=0 이 되어도
+    //   REGCEB=1 (항상 follow) 이라야 doutb 까지 전파 (bram_c2_to_pool / 실 IP 와 동일).
+    reg [127:0] fc_poolfc_dout_i;
     always @(posedge clk) begin
-        if (fc_poolfc_re)
-            fc_poolfc_dout <= poolfc_mem[fc_poolfc_addr];
+        if (fc_poolfc_re) fc_poolfc_dout_i <= poolfc_mem[fc_poolfc_addr];  // core: ENB gated
+        fc_poolfc_dout <= fc_poolfc_dout_i;                                // output reg: 항상 follow
     end
 
     //==========================================================================

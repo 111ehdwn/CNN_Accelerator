@@ -22,9 +22,9 @@
 //
 //   ★ 필요한 BMG IP (Vivado):
 //     [본 모듈 직접 인스턴스]
-//     bram_input        (PS write Port A 32b×512 / conv1 read Port B 8b×2048, L=1)
+//     bram_input        (PS write Port A 32b×512 / conv1 read Port B 8b×2048, L=2)  ★ 300MHz: L=1→L=2 + conv1_fsm OUT_DELAY/adder 4-stage
 //     bram_c1_to_c2     (conv1 write / conv2 read, 64b×2048, byte-write, L=2)
-//     bram_c2_to_pool   (conv2 write / maxpool read, 128b×2048, L=1)
+//     bram_c2_to_pool   (conv2 write / maxpool read, 128b×2048, L=2)  ★ 300MHz: L=1→L=2 + maxpool_fsm 7-phase
 //     bram_pool_to_fc   (maxpool write / fc read, 128b×512, L=1)   ★ 신규 IP
 //     [engine 내부 인스턴스 — Port A 만 외부 passthrough]
 //     conv1_weight_bram (conv1_engine) / conv2_weight_bram (conv2_engine) / fc_weight_bram (fc_engine)

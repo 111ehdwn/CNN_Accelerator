@@ -42,7 +42,7 @@ module maxpool_fsm (
     reg [1:0] state;
     reg [3:0] out_row;
     reg [3:0] out_col;
-    reg [2:0] phase;      // 0~5: BRAM 1-cycle latency 고려
+    reg [2:0] phase;      // 0~6: c2pool BRAM L=2 (2-cycle) latency 고려
     reg [2:0] flush_cnt;
     reg [7:0] cur_addr_reg;
 
@@ -139,7 +139,9 @@ module maxpool_fsm (
                         // phase 0
                         // request p00
                         // 이 클럭에서 주소만 요청한다.
-                        // 동기식 BRAM이므로 rd_data는 아직 유효하지 않다.
+                        // c2pool BRAM 은 L=2 (core reg + output reg) 이므로
+                        // 발행한 주소의 데이터는 2 cycle 뒤에 doutb 로 도착한다.
+                        // (rd_addr 1-cycle latch + BRAM L=2 → capture 는 발행 +3 phase)
                         //======================================================
                         3'd0: begin
                             rd_en   <= 1'b1;
@@ -150,9 +152,6 @@ module maxpool_fsm (
                         //======================================================
                         // phase 1
                         // request p01
-                        // 이 시점에서 BRAM은 p00을 출력 준비하지만,
-                        // 같은 posedge에서 FSM이 잡으면 이전 rd_data를 보게 된다.
-                        // 따라서 여기서는 캡처하지 않고 다음 phase에서 p00을 잡는다.
                         //======================================================
                         3'd1: begin
                             rd_en   <= 1'b1;
@@ -162,27 +161,25 @@ module maxpool_fsm (
 
                         //======================================================
                         // phase 2
-                        // capture p00, request p10
+                        // request p10
+                        // L=2 이므로 p00 은 아직 도착 전 → 캡처 없음.
                         //======================================================
                         3'd2: begin
                             rd_en   <= 1'b1;
-
-                            for (j = 0; j < 16; j = j + 1)
-                                p00_flat[j*8 +: 8] <= rd_data[j*8 +: 8];
-
                             rd_addr <= ((in_row_10 + 10'd1) * 10'd24) + in_col_10;
                             phase   <= 3'd3;
                         end
 
                         //======================================================
                         // phase 3
-                        // capture p01, request p11
+                        // request p11, capture p00
+                        // L=2: 이 cycle 의 doutb = mem[p00 addr] (phase 0 발행분).
                         //======================================================
                         3'd3: begin
                             rd_en   <= 1'b1;
 
                             for (j = 0; j < 16; j = j + 1)
-                                p01_flat[j*8 +: 8] <= rd_data[j*8 +: 8];
+                                p00_flat[j*8 +: 8] <= rd_data[j*8 +: 8];
 
                             rd_addr <= ((in_row_10 + 10'd1) * 10'd24) + (in_col_10 + 10'd1);
                             phase   <= 3'd4;
@@ -190,24 +187,38 @@ module maxpool_fsm (
 
                         //======================================================
                         // phase 4
-                        // capture p10
-                        // p11은 이 클럭에서 BRAM 쪽에서 출력 준비되므로,
-                        // 다음 phase에서 캡처해야 한다.
+                        // capture p01
+                        // 마지막 read 주소 (p11) 는 phase 3 에서 발행됨. 이후
+                        // rd_en=0 이어도 c2pool 의 output reg 가 REGCEB=1 (항상
+                        // enable) 이라 p11 이 doutb 까지 정상 전파된다.
                         //======================================================
                         3'd4: begin
                             rd_en <= 1'b0;
 
                             for (j = 0; j < 16; j = j + 1)
-                                p10_flat[j*8 +: 8] <= rd_data[j*8 +: 8];
+                                p01_flat[j*8 +: 8] <= rd_data[j*8 +: 8];
 
                             phase <= 3'd5;
                         end
 
                         //======================================================
                         // phase 5
-                        // capture p11, start compare, advance output pixel
+                        // capture p10
                         //======================================================
                         3'd5: begin
+                            rd_en <= 1'b0;
+
+                            for (j = 0; j < 16; j = j + 1)
+                                p10_flat[j*8 +: 8] <= rd_data[j*8 +: 8];
+
+                            phase <= 3'd6;
+                        end
+
+                        //======================================================
+                        // phase 6
+                        // capture p11, start compare, advance output pixel
+                        //======================================================
+                        3'd6: begin
                             rd_en <= 1'b0;
 
                             for (j = 0; j < 16; j = j + 1)

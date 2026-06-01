@@ -3,8 +3,11 @@
 // Module Name: conv1_engine
 // Description:
 //   - Fixed the premature 'out_sel_r' bug and 1-clk data shift mismatch.
-//   - Aligned all control paths (we, addr, sel) with the exact 3-cycle delay
-//     of the hardware data path (PE + Adder Tree + Truncate/ReLU).
+//   - Aligned all control paths (we, addr, sel) with the hardware data path.
+//     ★ 300MHz refactor (docs/conv1_timing.md): bram_input L=2 + conv1_adder_tree
+//       4-stage pipeline. datapath latency = window(L+1) + pe(4) + adder(4) + trunc(1).
+//       보상은 conv1_fsm 의 OUT_DELAY(=L+N+4=10) 와 FLUSH_LEN(=12) 에서 흡수 —
+//       엔진의 we_pipe(3) / ch_final(1) / bank_sel_pipe(3) 정렬 구조는 그대로.
 //   - 4-way handshake (prior_wdone / succ_rdone / rdone / wdone) + internal
 //     ping-pong bank (input_bank_sel / bank_sel toggle FF on rdone / wdone).
 //   - bank_sel 은 addr_pipe 와 같은 3-stage shift (bank_sel_pipe) 통해
@@ -282,8 +285,10 @@ module conv1_engine (
     endgenerate
 
     //==========================================================================
-    // 7. adder_tree x 2 (1클럭 내부 레지스터 지연 포함)
+    // 7. adder_tree x 2 (★ 4-stage pipeline, 300MHz refactor)
     //   Conv1 전용 (9:2 토폴로지). RTL/conv1/conv1_adder_tree.v.
+    //   기존 1-stage 조합 가산 → 4-stage (1 add-level/stage). latency 1→4.
+    //   포트 무변경 → 결선 동일. conv1_fsm OUT_DELAY 가 +3 흡수.
     //==========================================================================
     wire signed [23:0] sum0_g1, sum1_g1, sum0_g2, sum1_g2;
 

@@ -143,10 +143,13 @@ module tb_fc_engine;
         end
     end
 
-    // poolfc BMG behavioral (L=1)
+    // poolfc BMG behavioral (L=2: core read reg(ENB) + output primitive reg(REGCEB tied 1))
+    //   ★ 출력 reg 는 ENB 게이팅 금지 — 마지막 read(pair4 sp143) 직후 ENB=0 에서도
+    //   REGCEB=1(항상 follow) 이라야 doutb 전파 (bram_c2_to_pool / 실 IP 와 동일).
+    reg [127:0] poolfc_dout_i;
     always @(posedge clk) begin
-        if (poolfc_re)
-            poolfc_dout <= poolfc_mem[poolfc_addr];
+        if (poolfc_re) poolfc_dout_i <= poolfc_mem[poolfc_addr];  // core: ENB gated
+        poolfc_dout <= poolfc_dout_i;                              // output reg: 항상 follow
     end
 
     //==========================================================================

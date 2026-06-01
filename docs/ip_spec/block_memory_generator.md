@@ -12,9 +12,9 @@ IP 재생성 / 새 팀원 onboarding / 인터페이스 충돌 디버깅 시 참�
 | Component | Width A / B | Depth A / B | L | Byte Write | Primitive Output Reg | REGCEB Pin | 사용처 (write → read) |
 |---|---|---|---|---|---|---|---|
 | **`bram_c1_to_c2`** | 64 / 64 | 2048 / 2048 | 2 | ✓ (8-bit wea) | ✓ Enable | 미노출 (내부 tie 1) | Conv1 → Conv2 (ping-pong) |
-| **`bram_c2_to_pool`** | 128 / 128 | 2048 / 2048 | 1 | ✗ (1-bit wea) | ✗ Disable | N/A | Conv2 → Maxpool (ping-pong) |
+| **`bram_c2_to_pool`** | 128 / 128 | 2048 / 2048 | 2 | ✗ (1-bit wea) | ✓ Enable | 미노출 (내부 tie 1) | Conv2 → Maxpool (ping-pong). 300MHz 위해 L=1→L=2 (§3.4) |
 | **`conv2_weight_bram`** | 32 / 32 | 1024 / 1024 | 2 | ✗ (1-bit wea) | ✓ Enable | ✓ 노출 (engine 에서 상수 1 결선) | PS → Conv2 weight |
-| **`bram_input`** | **32 / 8** (asymmetric) | **512 / 2048** | **1** | ✗ (1-bit wea) | **✗ Disable** | N/A (Output Reg 없음) | PS → Conv1 input image (ping-pong, 2 bank × 1024 byte). Port A = AXI burst 32-bit. Port B = Conv1 byte read. |
+| **`bram_input`** | **32 / 8** (asymmetric) | **512 / 2048** | **2** ★ | ✗ (1-bit wea) | **✓ Enable** ★ | 미노출 (내부 tie 1) | PS → Conv1 input image (ping-pong, 2 bank × 1024 byte). Port A = AXI burst 32-bit. Port B = Conv1 byte read. ★ 300MHz: L=1→L=2 (§6.2). |
 | **`conv1_weight_bram`** | 32 / 32 | 64 / 64 | 2 | ✗ (1-bit wea) | ✓ Enable | ✓ 노출 (engine 에서 상수 1 결선) | PS → Conv1 weight |
 | **`bram_pool_to_fc`** | 128 / 128 | 512 / 512 | 1 | ✗ (1-bit wea) | ✗ Disable | N/A | Maxpool → FC (ping-pong, 2 bank × 144 + padding) |
 | **`fc_weight_bram`** (사용 중, IP 캡처 대기) | 256 / 256 | 1024 / 1024 | 1 | ✗ (1-bit wea) | ✗ Disable | N/A | PS → FC weight. RTL/fc/fc_engine.v:105 에서 instantiate. IP 캡처 추가 시 spec 확정. |
@@ -111,8 +111,8 @@ Conv2 의 16 OC × 24×24 output 을 Maxpool 의 input BRAM 으로 전달. 2 ban
 | Port B | Port B Depth | 2048 |
 | Port B | Operating Mode | Write First |
 | Port B | Enable Port Type | Use ENB Pin |
-| Port B | Primitives Output Register | **✗ 미체크** (L=1) |
-| Port B | REGCEB Pin | N/A (Output Reg 없음) |
+| Port B | Primitives Output Register | **✓ Enable** (L=2) |
+| Port B | REGCEB Pin | 미체크 (Vivado 가 내부적으로 1 로 tie) |
 
 ### 3.3 Port signature
 
@@ -131,13 +131,26 @@ bram_c2_to_pool inst (
 );
 ```
 
-### 3.4 왜 L=1 (Primitive Output Register Disable)?
+### 3.4 왜 L=2 (Primitive Output Register Enable)? — 300MHz 오버클럭
 
-`RTL/maxpool/maxpool_fsm.v` 의 phase counting 이 **L=1 가정**.
-- maxpool 이 cycle T 에 addr 발행 → cycle T+1 에 doutb 받음.
-- L=2 (Primitive Output Reg ON) 으로 두면 dout 이 1 cycle 더 늦게 와서 phase counter 와 misalign → mismatch.
+**타이밍 사유 (300MHz, period 3.333ns @ xc7a100t-1)**: maxpool 의 유일한 임계 경로는
+`c2pool BRAM doutb → p00/p01/p10/p11_flat 캡처 FF` (로직 0, BRAM clock-to-out + 128b
+광대역 라우팅만). Artix-7 −1 의 Block RAM 정격 Fmax(388MHz)는 output register 사용 전제 —
+L=1 (output reg OFF) 은 array latch clock-to-out(~2.3ns) 이 커서 300MHz 에서 negative
+slack. L=2 (output reg ON) 은 clock-to-out 이 ~0.45ns 로 줄어 약 +1.8ns 슬랙 확보.
 
-자세한 분석은 `RTL/maxpool/maxpool_fsm.v` (6-phase logic) 참조.
+> ⚠️ **L=2 는 maxpool_fsm 의 phase counting 수정과 반드시 묶여야 한다.**
+> L=2 는 doutb 가 L=1 대비 1 cycle 늦게 도착하므로, `RTL/maxpool/maxpool_fsm.v` 의 capture
+> phase 를 +1 시프트했다 (6-phase 0~5 → **7-phase 0~6**). 주소 발행(phase 0~3)·rd_en
+> 스케줄은 그대로, capture 만 phase 3/4/5/6 (p00/p01/p10/p11) 으로 이동.
+>
+> **REGCEB 는 반드시 상수 1 (내부 tie).** 마지막 read(p11) 가 phase 3 에서 발행된 뒤
+> phase 4~6 에서 ENB=0 이 되어도, output reg 가 항상 core 를 follow(REGCEB=1) 해야 p11 이
+> doutb 까지 전파된다. ENB 와 묶으면 p11 누락 → mismatch (weight BMG §5.5 와 동일 이슈).
+> c1c2 처럼 REGCEB pin 미노출 + Vivado 내부 tie-1 로 처리.
+
+cycle-by-cycle 동작은 `RTL/maxpool/maxpool_fsm.v` (7-phase logic) 및 `bmg_sim_models.v`
+의 `bram_c2_to_pool` (L=2 2-stage 모델) 참조. 변경 전(L=1)은 git 이력 참조.
 
 ### 3.5 참고 스크린샷
 
@@ -324,11 +337,19 @@ Conv1 의 input streaming 이 **8-bit byte read**. Port A/B width 가 다른 **a
 | Port B | Port B Depth | 2048 (자동 — Vivado 가 A=32×512 와 같은 메모리 크기로 맞춤) |
 | Port B | Operating Mode | Read First (강제도 OK) |
 | Port B | Enable Port Type | Use ENB Pin |
-| Port B | **Primitives Output Register** | **✗ 미체크 (L=1)** |
+| Port B | **Primitives Output Register** | **✓ Enable (L=2)** ★ 300MHz |
 | Port B | Core Output Register | ✗ |
-| Port B | REGCEB Pin | N/A (Output Reg 없음) |
+| Port B | REGCEB Pin | 미노출 (Vivado 내부 tie-1) |
 
-> **왜 L=1?** `conv1_design.md §4` 와 `conv1_fsm` 의 6-cycle pipeline 가정이 BRAM L=1. broadcast fanout 도 작음 (8-bit single output → line_buffer 한 곳) → output register 불필요. L=2 로 두면 1 cycle 어긋남 → 출력 오염.
+> **왜 L=2? — 300MHz 오버클럭** (target `xc7a100t-csg324-1`, speed grade −1).
+> Artix-7 −1 BRAM 정격 Fmax 388MHz 는 **output register 전제**. L=1 (core reg only) 은
+> BRAM clock-to-out ~2.3ns + window 캡처 경로가 300MHz(3.33ns) 에서 negative slack →
+> L=2 로 clock-to-out ~0.45ns (~+1.8ns 슬랙). `bram_c2_to_pool`/maxpool 와 동일 근거.
+> conv1 은 L=2 의 +1 cycle latency 를 `conv1_fsm` 의 OUT_DELAY(=L+N+4=10) 로 흡수
+> (cycle-by-cycle 증명: `docs/conv1_timing.md`). REGCEB 미노출 — read 가 RUN/FLUSH 동안
+> 연속(enb=pipe_en)이라 마지막 데이터가 FLUSH 중 propagate (conv2 c1c2 와 동일 케이스).
+>
+> ⚠️ 과거 L=1 이었음 (구 conv1 6-cycle pipeline 가정). 300MHz refactor 로 L=2 전환.
 
 ### 6.3 Port signature
 
@@ -561,7 +582,7 @@ conv2_weight_bram c2w_bmg (
 | `bram_pool_to_fc` | 1 | fc_engine.v:20-22 의 pipeline timeline 이 L=1 가정. |
 | `conv2_weight_bram` | 2 | weight_loader 의 `latch_valid_dd` (2-cycle 지연) 가 L=2 가정. |
 | `conv1_weight_bram` | 2 | conv1_weight_loader 의 `latch_valid_dd` (2-cycle 지연) 가 L=2 가정. |
-| `bram_input` | 1 | conv1 의 6-cycle pipeline 가정이 BRAM L=1. |
+| `bram_input` | 2 ★ | 300MHz: Artix-7 −1 BRAM 정격 Fmax(388MHz)가 output reg 전제. conv1_fsm OUT_DELAY=L+N+4=10 으로 +1 흡수 (docs/conv1_timing.md). |
 | `fc_weight_bram` | 1 | fc_engine.v:21 코멘트 — input/weight BRAM 모두 L=1. |
 
 ### B.4 L=2 채택 시 추가 고려
