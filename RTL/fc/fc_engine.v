@@ -15,7 +15,7 @@
 //   Input BRAM (poolfc):
 //     width = 128-bit = 16ch * 8-bit
 //     depth = 512 = 2 bank * 256 (144 만 유효, 나머지 padding)
-//     addr  = {input_bank_sel, s_cnt[7:0]}   — maxpool 의 write 포맷과 일치
+//     addr  = {input_bank_sel, s_cnt[7:0]}   - maxpool 의 write 포맷과 일치
 //     one address contains all 16 channels for the same spatial position
 //
 //   Weight BRAM:
@@ -48,7 +48,7 @@ module fc_engine #(
     //==========================================================================
     // poolfc buffer read port
     //   128-bit × 512 (2 bank × 256), 1-cycle read latency.
-    //   addr = {input_bank_sel, s_cnt[7:0]} — bank=0: 0..143, bank=1: 256..399.
+    //   addr = {input_bank_sel, s_cnt[7:0]} - bank=0: 0..143, bank=1: 256..399.
     //==========================================================================
     output wire         poolfc_re,
     output wire [8:0]   poolfc_addr,         // {input_bank_sel, s_cnt[7:0]}
@@ -98,7 +98,7 @@ module fc_engine #(
     //==========================================================================
     // 2. Input BRAM address (poolfc)
     //
-    //   Bank format: {bank_sel, s_cnt[7:0]} — 9-bit, top bit = bank.
+    //   Bank format: {bank_sel, s_cnt[7:0]} - 9-bit, top bit = bank.
     //     bank=0 : addr {0, 0}..{0, 143} = 0..143
     //     bank=1 : addr {1, 0}..{1, 143} = 256..399
     //
@@ -139,16 +139,16 @@ module fc_engine #(
     //
     // PE 는 공용 core/pe_cell (DSP 3-stage + 출력 reg = 4-cycle latency).
     // Timeline for an issued spatial word at cycle T (BRAM L=1):
-    //   T+1 : BRAM doutb valid           — PE x/packed_w inputs valid (combinational)
-    //   T+2 : DSP A/B latch              — pe_en @ T+1 = 1 필요
-    //   T+3 : DSP M latch                — pe_en @ T+2 = 1 필요
-    //   T+4 : DSP P latch                — pe_en @ T+3 = 1 필요
-    //   T+5 : PE 출력 reg (mul0/mul1)    — pe_en @ T+4 = 1 필요
-    //   T+6 : adder stage1 reg (e1)      — adder_en @ T+5 = 1 필요
+    //   T+1 : BRAM doutb valid           - PE x/packed_w inputs valid (combinational)
+    //   T+2 : DSP A/B latch              - pe_en @ T+1 = 1 필요
+    //   T+3 : DSP M latch                - pe_en @ T+2 = 1 필요
+    //   T+4 : DSP P latch                - pe_en @ T+3 = 1 필요
+    //   T+5 : PE 출력 reg (mul0/mul1)    - pe_en @ T+4 = 1 필요
+    //   T+6 : adder stage1 reg (e1)      - adder_en @ T+5 = 1 필요
     //   T+7 : adder stage2 reg (e2)
     //   T+8 : adder stage3 reg (e3)
-    //   T+9 : adder stage4 reg (sum0/1)  — adder_en @ T+8 = 1 필요
-    //   T+10: accumulator update         — acc_en @ T+9 = 1 필요
+    //   T+9 : adder stage4 reg (sum0/1)  - adder_en @ T+8 = 1 필요
+    //   T+10: accumulator update         - acc_en @ T+9 = 1 필요
     //
     // comp_pipe[k] @ cycle C = fsm_comp_v @ cycle (C-k-1) (1-cycle 등록 지연부터).
     // 따라서 (index k = X-(T+1)):

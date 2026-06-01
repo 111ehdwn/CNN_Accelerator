@@ -8,10 +8,10 @@
 //     TB PS-write   → fc_weight_bram (behavioral, 720 entries)
 //
 //   Handshake (new conv2-pattern):
-//     start       : system arm pulse — init 1회만 (이후 image 는 handshake 자동)
+//     start       : system arm pulse - init 1회만 (이후 image 는 handshake 자동)
 //     prior_wdone : image trigger pulse (= maxpool.wdone direct wire emul)
-//     rdone       : FC 가 image read 완료 — 모니터링만
-//     class_valid : argmax 결과 ready — 1-cycle pulse
+//     rdone       : FC 가 image read 완료 - 모니터링만
+//     class_valid : argmax 결과 ready - 1-cycle pulse
 //
 //   Bank format (new):
 //     poolfc_addr = {input_bank_sel, s_cnt[7:0]}   ← maxpool 의 write 포맷과 일치
@@ -20,7 +20,7 @@
 //     단일 image TB 는 bank=0 만 사용 (FSM 의 input_bank_sel reset=0).
 //
 //   Verification:
-//     1. 10 OC logits (24-bit signed) per pair — pre-argmax 정확성.
+//     1. 10 OC logits (24-bit signed) per pair - pre-argmax 정확성.
 //     2. argmax class_idx (= 5, expected).
 //
 //   Data files:
@@ -295,7 +295,7 @@ module tb_fc_engine;
             if (rdone)
                 $display("[DBG H] cyc=%0d : fc.rdone (image read 완료)", cycle_cnt);
             if (class_valid)
-                $display("[DBG H] cyc=%0d : fc.class_valid pulsed — class_idx=%0d",
+                $display("[DBG H] cyc=%0d : fc.class_valid pulsed - class_idx=%0d",
                          cycle_cnt, class_idx);
         end
     end
@@ -306,7 +306,7 @@ module tb_fc_engine;
     integer timeout_cnt;
     initial begin : main
         $display("============================================================");
-        $display("[TB] tb_fc_engine — single-image bit-exact verification");
+        $display("[TB] tb_fc_engine - single-image bit-exact verification");
         $display("     ACC_W=%0d, CLK_PERIOD=%0d ns", ACC_W, CLK_PERIOD);
         $display("     Handshake: start (arm) + prior_wdone (image trigger)");
         $display("     Bank format: poolfc_addr = {input_bank_sel, s_cnt[7:0]}");
@@ -321,7 +321,7 @@ module tb_fc_engine;
         load_weights();
         repeat (3) @(posedge clk);
 
-        // 2. System arm pulse — conv1 / maxpool 패턴: 첫 image 진입 전 한 번.
+        // 2. System arm pulse - conv1 / maxpool 패턴: 첫 image 진입 전 한 번.
         //    이후 image 는 prior_wdone 만으로 자동 진행 (FSM 의 ready_to_compute).
         @(negedge clk); start = 1'b1;
         @(negedge clk); start = 1'b0;
@@ -350,7 +350,7 @@ module tb_fc_engine;
         $display("[FINAL]");
         $display("  pair_done_cnt   = %0d / 5", pair_done_cnt);
         $display("  logit pass/fail = %0d / %0d  (10 OC total)", pass_cnt, fail_cnt);
-        $display("  class_idx       = %0d (expected %0d) — %s",
+        $display("  class_idx       = %0d (expected %0d) - %s",
                  class_idx, EXP_CLS, (class_idx == EXP_CLS) ? "PASS" : "FAIL");
         $display("------------------------------------------------------------");
         if (fail_cnt == 0 && pair_done_cnt == 5 && class_idx == EXP_CLS)
@@ -372,3 +372,42 @@ module tb_fc_engine;
 endmodule
 
 
+//==============================================================================
+// fc_weight_bram behavioral model
+//   Simple Dual-Port, 256-bit × 1024 (BMG spec depth; 720 entries 사용).
+//   Port A: write only - ENA + WEA 둘 다 결선 필요 (실제 BMG 거동과 일치).
+//   Port B: read with L=1 (Primitive Output Register Disable).
+//
+//   ★ Vivado 프로젝트에 실제 fc_weight_bram BMG IP 가 있으면 이 module 을
+//     주석 처리하거나 다른 파일로 분리하세요 (duplicate 정의 충돌 방지).
+//==============================================================================
+/*
+module fc_weight_bram (
+    input  wire         clka,
+    input  wire         ena,
+    input  wire         wea,
+    input  wire [9:0]   addra,
+    input  wire [255:0] dina,
+
+    input  wire         clkb,
+    input  wire         enb,
+    input  wire [9:0]   addrb,
+    output reg  [255:0] doutb
+);
+    reg [255:0] mem [0:1023];
+
+    integer mi;
+    initial begin
+        for (mi = 0; mi < 1024; mi = mi + 1) mem[mi] = 256'd0;
+        doutb = 256'd0;
+    end
+
+    always @(posedge clka) begin
+        if (ena && wea) mem[addra] <= dina;
+    end
+
+    always @(posedge clkb) begin
+        if (enb) doutb <= mem[addrb];
+    end
+endmodule
+*/
