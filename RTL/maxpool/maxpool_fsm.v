@@ -9,12 +9,12 @@ module maxpool_fsm (
     // 4-way handshake (conv2_fsm 패턴 차용)
     //   prior_diff = (rdone count) - (prior_wdone count) ; data_ready = (prior_diff < 0)
     //   after_diff = (wdone count) - (succ_rdone count)  ; output_avail = (after_diff < 2)
-    input  wire         prior_wdone,      // c2pool buffer (Conv2 wdone) — 입력 image 준비됨
-    input  wire         succ_rdone,       // poolfc buffer (FC rdone) — 출력 bank 비움
+    input  wire         prior_wdone,      // c2pool buffer (Conv2 wdone) - 입력 image 준비됨
+    input  wire         succ_rdone,       // poolfc buffer (FC rdone) - 출력 bank 비움
     output reg          rdone,            // c2pool read 완료 (= done, P0 단순 매핑)
     output reg          wdone,            // poolfc write 완료 (= done, P0 단순 매핑)
 
-    // Bank select (conv2_fsm 패턴 — maxpool 내부 관리, engine 이 addr 에 prepend)
+    // Bank select (conv2_fsm 패턴 - maxpool 내부 관리, engine 이 addr 에 prepend)
     output reg          input_bank_sel,   // c2pool read bank  : rdone 시 toggle
     output reg          output_bank_sel,  // poolfc write bank : wdone 시 toggle
 
@@ -84,7 +84,7 @@ module maxpool_fsm (
     wire [4:0] in_row = out_row << 1;
     wire [4:0] in_col = out_col << 1;
 
-    // local addr (0~575) — 10-bit. bank offset 제거됨 (buffer 가 prepend).
+    // local addr (0~575) - 10-bit. bank offset 제거됨 (buffer 가 prepend).
     wire [9:0] in_row_10 = {5'd0, in_row};
     wire [9:0] in_col_10 = {5'd0, in_col};
 
@@ -125,7 +125,7 @@ module maxpool_fsm (
                     flush_cnt <= 3'd0;
 
                     // RUN 진입 조건: 입력 image 준비 + 출력 bank 여유.
-                    //   data_ready   = (prior_diff_next < 0) — 다음 cycle 의 prior_diff 값 기준
+                    //   data_ready   = (prior_diff_next < 0) - 다음 cycle 의 prior_diff 값 기준
                     //   output_avail = (after_diff_next < 2)
                     //   start_pulse  = system init 시 첫 image 강제 진입용 (legacy)
                     if ((data_ready && output_avail) || start_pulse) begin
@@ -287,7 +287,7 @@ module maxpool_fsm (
     end
 
     //=========================================================================
-    // Bank select toggle FF (conv2_fsm 패턴 — maxpool 내부 관리)
+    // Bank select toggle FF (conv2_fsm 패턴 - maxpool 내부 관리)
     //   input_bank_sel  : c2pool read bank, rdone 시 toggle
     //   output_bank_sel : poolfc write bank, wdone 시 toggle
     //

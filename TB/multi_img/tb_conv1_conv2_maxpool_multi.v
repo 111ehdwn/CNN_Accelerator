@@ -159,7 +159,7 @@ module tb_conv1_conv2_maxpool_multi;
     //==========================================================================
     // BMG IP instances
     //==========================================================================
-    bram_input in_bmg (
+    conv1_input_bram in_bmg (
         .clka  (clk), .ena (in_ena), .wea (in_wea),
         .addra (in_addra), .dina (in_dina),
         .clkb  (clk), .enb (in_enb),

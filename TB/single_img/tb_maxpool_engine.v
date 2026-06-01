@@ -27,8 +27,8 @@
 //     poolfc 의 packed 128-bit word [pixel] 를 byte 별로 unpack 해서 비교
 //////////////////////////////////////////////////////////////////////////////////
 
-`define CONV2_OUT_HEX   "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_output_c2pool.hex"
-`define MAXPOOL_REF_HEX "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/maxpool_output.hex"
+`define CONV2_OUT_HEX   "C:\Users\111eh\INTELLIGENT_SYSTEM_DESIGN\assign4_code\CNN_Accelerator\data\single_img\conv2_output_c2pool.hex"
+`define MAXPOOL_REF_HEX "C:\Users\111eh\INTELLIGENT_SYSTEM_DESIGN\assign4_code\CNN_Accelerator\data\single_img\maxpool_output.hex"
 
 
 module tb_maxpool_engine;
