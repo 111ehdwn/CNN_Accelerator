@@ -42,7 +42,6 @@ module cnn_accelerator (
     input  wire        enable,        // 가동 (trigger qualify)
     input  wire        start,         // 1-cycle pulse: weight load + timer 시작
     input  wire        img_ready,     // 1-cycle pulse: 새 image 준비 → conv1 trigger
-    output wire [3:0]  result,        // 분류 결과 digit (0~9)
     output wire        img_done,      // image 처리 완료 pulse (fc.class_valid 지연)
     output wire        input_consumed,// conv1 input read 완료 (= conv1_rdone) — PS overlap backpressure
 
@@ -304,7 +303,7 @@ module cnn_accelerator (
         end
     end
 
-    assign result   = result_r;
+    // result 출력 포트 제거 — result_r 은 아래 result-writer 가 bram_output 에 쓰는 데만 사용.
     assign img_done = img_done_r;
 
     // input-consumed: conv1 이 input BRAM read 를 끝낸 시점(RUN2 끝) 의 1-cycle pulse.

@@ -9,15 +9,15 @@
 //                        [1] start     (write-1 → 1-cycle pulse, auto-clear)
 //                        [2] img_ready (write-1 → 1-cycle pulse, auto-clear)
 //     0x04 STATUS (R)  : [0]    done       (img_cnt==10000 latch)
-//                        [4:1]  result     (마지막 image 분류 결과, img_done 시 latch)
-//                        [5]    can_load   (적재가능: 발행-consumed < 2)
-//                        [19:6] img_cnt    (14-bit, 처리 완료 image 수)
+//                        [1]    can_load   (적재가능: 발행-consumed < 2)
+//                        [15:2] img_cnt    (14-bit, 처리 완료 image 수)
+//                        (result 제거 → bram_output 전용 AXI BRAM Ctrl 로 read)
 //     0x08 TIMER_LO (R): timer[31:0]
 //     0x0C TIMER_HI (R): {16'b0, timer[47:32]}
 //
 //   PL(cnn_accelerator) 인터페이스:
 //     out : enable, start, img_ready
-//     in  : result[3:0], img_done, input_consumed
+//     in  : img_done, input_consumed   (result 제거 — bram_output 가 대체)
 //
 //   reset_n 은 외부 보드 버튼 (S_AXI_ARESETN 과 별개로 PL 에 직결 — 본 CSR 미관여).
 //
@@ -48,7 +48,6 @@
 		output wire        enable,
 		output wire        start,
 		output wire        img_ready,
-		input  wire [3:0]  result,
 		input  wire        img_done,
 		input  wire        input_consumed,
 
@@ -239,12 +238,7 @@
 	    else if (img_cnt == 14'd10000) done_latch <= 1'b1;
 	end
 
-	// result : img_done 시 latch
-	reg [3:0] result_latch;
-	always @(posedge S_AXI_ACLK) begin
-	    if (!S_AXI_ARESETN) result_latch <= 4'd0;
-	    else if (img_done)  result_latch <= result;
-	end
+	// (result_latch 제거 — 결과는 bram_output 가 누적, PS 가 전용 AXI 로 read)
 
 	// can_load : (img_ready 발행 - input_consumed) < 2  (input BRAM 2-bank backpressure)
 	reg [2:0] inflight;   // 적재했지만 conv1 read 전인 image 수
@@ -330,7 +324,7 @@
 	       axi_araddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB];
 
 	wire [31:0] ctrl_rb = {29'd0, ctrl_img_ready, ctrl_start, ctrl_enable};
-	wire [31:0] status  = {12'd0, img_cnt, can_load, result_latch, done_latch};
+	wire [31:0] status  = {16'd0, img_cnt, can_load, done_latch};
 
 	assign S_AXI_RDATA =
 	       (rd_index == REG_CTRL) ? ctrl_rb                       :

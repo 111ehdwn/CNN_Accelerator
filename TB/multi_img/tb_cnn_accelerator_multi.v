@@ -51,7 +51,6 @@ module tb_cnn_accelerator_multi;
     reg        enable    = 1'b0;
     reg        start     = 1'b0;
     reg        img_ready = 1'b0;
-    wire [3:0] result;
     wire       img_done;
     wire       input_consumed;
 
@@ -95,7 +94,6 @@ module tb_cnn_accelerator_multi;
         .enable    (enable),
         .start     (start),
         .img_ready (img_ready),
-        .result    (result),
         .img_done  (img_done),
         .input_consumed (input_consumed),
 
@@ -315,7 +313,7 @@ module tb_cnn_accelerator_multi;
         if (CHECK_LABEL) begin
             $display("  bram_output readback : %0d / %0d", rb_pass, N_IMAGES);
             if (images_pass == N_IMAGES && rb_pass == N_IMAGES)
-                $display("  *** PASS *** (result+logit bit-exact + bram_output readback, overlap)");
+                $display("  *** PASS *** (logit bit-exact + bram_output readback, overlap)");
             else
                 $display("  *** FAIL ***");
         end
@@ -344,7 +342,6 @@ module tb_cnn_accelerator_multi;
     // PROCESS 3: Result collector — img_done 마다 result/logit 검증
     //==========================================================================
     integer i_res, j_res, logit_mm;
-    reg [3:0] exp_cls;
     initial begin : result_collector
         wait (resetn == 1'b1);
 
@@ -354,22 +351,22 @@ module tb_cnn_accelerator_multi;
             last_result_cyc = cycle_cnt;
             results_seen = results_seen + 1;
 
+            // result(class)는 bram_output readback(main_process 끝)에서 검증. 여기선 logit 만.
             if (CHECK_LABEL) begin
                 logit_mm = 0;
                 for (j_res = 0; j_res < 10; j_res = j_res + 1)
                     if (dut.fc.logit_reg[j_res][23:0] !== exp_logit[i_res*10 + j_res])
                         logit_mm = logit_mm + 1;
-                exp_cls = exp_argmax(i_res*10);
 
-                if (logit_mm == 0 && result == exp_cls) begin
+                if (logit_mm == 0) begin
                     images_pass = images_pass + 1;
-                    $display("[TB] img %3d : PASS  result=%0d  @cyc %0d", i_res, result, cycle_cnt);
+                    $display("[TB] img %3d : logit PASS  @cyc %0d", i_res, cycle_cnt);
                 end else begin
-                    $display("[TB] img %3d : FAIL  result=%0d exp=%0d logit_mm=%0d/10  @cyc %0d",
-                             i_res, result, exp_cls, logit_mm, cycle_cnt);
+                    $display("[TB] img %3d : logit FAIL  logit_mm=%0d/10  @cyc %0d",
+                             i_res, logit_mm, cycle_cnt);
                 end
             end else begin
-                $display("[TB] img %3d : result=%0d  @cyc %0d", i_res, result, cycle_cnt);
+                $display("[TB] img %3d : done  @cyc %0d", i_res, cycle_cnt);
             end
         end
 

@@ -19,7 +19,6 @@
         output wire        enable,
         output wire        start,
         output wire        img_ready,
-        input  wire [3:0]  result,
         input  wire        img_done,
         input  wire        input_consumed,
         // User ports ends
@@ -58,7 +57,6 @@
         .enable(enable),
         .start(start),
         .img_ready(img_ready),
-        .result(result),
         .img_done(img_done),
         .input_consumed(input_consumed),
         // user port ends

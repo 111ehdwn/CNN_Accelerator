@@ -60,8 +60,11 @@ module tb_system_axi_multi;
     // CSR ↔ PL nets
     //==========================================================================
     wire        enable, start, img_ready;
-    wire [3:0]  result;
     wire        img_done, input_consumed;
+    // Output result BRAM Port B (PS read) — bram_output readback
+    reg         res_rd_en   = 1'b0;
+    reg  [11:0] res_rd_addr = 12'd0;
+    wire [31:0] res_rd_data;
 
     //==========================================================================
     // PS-write BMG Port A
@@ -76,7 +79,7 @@ module tb_system_axi_multi;
     //==========================================================================
     csr_axi_slave_lite_v1_0_csr csr (
         .enable(enable), .start(start), .img_ready(img_ready),
-        .result(result), .img_done(img_done), .input_consumed(input_consumed),
+        .img_done(img_done), .input_consumed(input_consumed),
 
         .S_AXI_ACLK(ACLK), .S_AXI_ARESETN(ARESETN),
         .S_AXI_AWADDR(AWADDR), .S_AXI_AWPROT(3'd0), .S_AXI_AWVALID(AWVALID), .S_AXI_AWREADY(AWREADY),
@@ -89,13 +92,14 @@ module tb_system_axi_multi;
     cnn_accelerator cnn (
         .clk(ACLK), .resetn(ARESETN),
         .enable(enable), .start(start), .img_ready(img_ready),
-        .result(result), .img_done(img_done), .input_consumed(input_consumed),
+        .img_done(img_done), .input_consumed(input_consumed),
         .in_ena(in_ena), .in_wea(in_wea), .in_addra(in_addra), .in_dina(in_dina),
         // weight BRAM 은 ENA+WEA 둘 다 필요 (실 BD 의 AXI BRAM Ctrl WSTRB). full-word write 라
         // wea = {4{ena}} 로 emul (미연결 시 wea=X → weight 가 X 로 적재되어 result=X 버그).
         .c1w_ena(c1w_ena), .c1w_wea({4{c1w_ena}}), .c1w_addra(c1w_addra), .c1w_dina(c1w_dina),
         .c2w_ena(c2w_ena), .c2w_wea({4{c2w_ena}}), .c2w_addra(c2w_addra), .c2w_dina(c2w_dina),
-        .fcw_ena(fcw_ena), .fcw_wea({32{fcw_ena}}), .fcw_addra(fcw_addra), .fcw_dina(fcw_dina)
+        .fcw_ena(fcw_ena), .fcw_wea({32{fcw_ena}}), .fcw_addra(fcw_addra), .fcw_dina(fcw_dina),
+        .res_rd_en(res_rd_en), .res_rd_addr(res_rd_addr), .res_rd_data(res_rd_data)
     );
 
     //==========================================================================
@@ -204,8 +208,10 @@ module tb_system_axi_multi;
     //==========================================================================
     // Main sequence
     //==========================================================================
-    integer i, j, logit_mm, prev_cnt, cur_cnt, got_result;
-    reg [3:0] exp_cls;
+    integer i, j, logit_mm, prev_cnt, cur_cnt;
+    integer rb_word, rb_i, rb_base, rb_pass;
+    reg [31:0] rb_data;
+    reg [3:0]  rb_res, rb_exp;
     initial begin
         $display("\n==========================================");
         $display("  Full system AXI TB : CSR ↔ cnn_accelerator  (N=%0d)", N_IMAGES);
@@ -233,44 +239,61 @@ module tb_system_axi_multi;
 
         prev_cnt = 0;
         for (i = 0; i < N_IMAGES; i = i + 1) begin
-            // backpressure: STATUS.can_load(bit5) polling
+            // backpressure: STATUS.can_load(bit1) polling
             rdata = 0;
-            while (!rdata[5]) axi_read(STAT);
+            while (!rdata[1]) axi_read(STAT);
 
             write_input(i);
             axi_write(CTRL, 32'h5);      // enable + img_ready(pulse, bit2)
 
-            // img_cnt(STATUS[19:6]) 증가 polling
+            // img_cnt(STATUS[15:2]) 증가 polling
             cur_cnt = prev_cnt;
             while (cur_cnt == prev_cnt) begin
                 axi_read(STAT);
-                cur_cnt = rdata[19:6];
+                cur_cnt = rdata[15:2];
             end
-            prev_cnt   = cur_cnt;
-            got_result = rdata[4:1];
+            prev_cnt = cur_cnt;
 
-            // logit bit-exact (hierarchical) + result(AXI)
+            // logit bit-exact (hierarchical). result(class)는 bram_output readback 으로 종료 후 검증.
             logit_mm = 0;
             for (j = 0; j < 10; j = j + 1)
                 if (cnn.fc.logit_reg[j][23:0] !== exp_logit[i*10 + j]) logit_mm = logit_mm + 1;
-            exp_cls = exp_argmax(i*10);
 
-            if (logit_mm == 0 && got_result == exp_cls) begin
+            if (logit_mm == 0) begin
                 images_pass = images_pass + 1;
-                $display("[TB] img %3d : PASS  result(AXI)=%0d  img_cnt=%0d", i, got_result, cur_cnt);
+                $display("[TB] img %3d : logit PASS  img_cnt=%0d", i, cur_cnt);
             end else begin
-                $display("[TB] img %3d : FAIL  result=%0d exp=%0d logit_mm=%0d", i, got_result, exp_cls, logit_mm);
+                $display("[TB] img %3d : logit FAIL  logit_mm=%0d  img_cnt=%0d", i, logit_mm, cur_cnt);
             end
         end
+
+        // ---- bram_output readback (PS emul: 종료 후 res_rd_* 로 일괄 read) ----
+        rb_pass = 0;
+        for (rb_word = 0; rb_word < (N_IMAGES + 3) / 4; rb_word = rb_word + 1) begin
+            @(negedge ACLK); res_rd_en = 1'b1; res_rd_addr = rb_word[11:0];
+            @(posedge ACLK);
+            @(negedge ACLK); rb_data = res_rd_data;
+            for (rb_i = 0; rb_i < 4; rb_i = rb_i + 1) begin
+                rb_base = rb_word*4 + rb_i;
+                if (rb_base < N_IMAGES) begin
+                    rb_res = rb_data[rb_i*8 +: 4];
+                    rb_exp = exp_argmax(rb_base*10);
+                    if (rb_res === rb_exp) rb_pass = rb_pass + 1;
+                    else $display("[TB] readback img %0d : FAIL  bram=%0d exp=%0d", rb_base, rb_res, rb_exp);
+                end
+            end
+        end
+        @(negedge ACLK); res_rd_en = 1'b0;
 
         // timer read
         axi_read(TLO);
         $display("[TB] timer_lo = %0d", rdata);
 
         $display("\n=========================================");
-        $display("  images PASS : %0d / %0d", images_pass, N_IMAGES);
-        if (images_pass == N_IMAGES)
-            $display("  *** PASS *** (end-to-end: AXI 제어 + result + logit bit-exact)");
+        $display("  images PASS (logit)  : %0d / %0d", images_pass, N_IMAGES);
+        $display("  bram_output readback : %0d / %0d", rb_pass, N_IMAGES);
+        if (images_pass == N_IMAGES && rb_pass == N_IMAGES)
+            $display("  *** PASS *** (AXI 제어 + logit bit-exact + bram_output readback)");
         else
             $display("  *** FAIL ***");
         $display("=========================================");

@@ -30,7 +30,7 @@
 
 /* ===== CSR register offsets ===== */
 #define CSR_CTRL      0x0U   /* [0]enable(level) [1]start(pulse) [2]img_ready(pulse) */
-#define CSR_STATUS    0x4U   /* [0]done [4:1]result [5]can_load [19:6]img_cnt        */
+#define CSR_STATUS    0x4U   /* [0]done [1]can_load [15:2]img_cnt (result→bram_output) */
 #define CSR_TIMER_LO  0x8U
 #define CSR_TIMER_HI  0xCU
 
@@ -40,9 +40,9 @@
 #define CTRL_IMG   0x4U
 /* STATUS decode */
 #define ST_DONE(s)    ( (s)        & 0x1U)
-#define ST_RESULT(s)  (((s) >> 1)  & 0xFU)
-#define ST_CANLOAD(s) (((s) >> 5)  & 0x1U)
-#define ST_IMGCNT(s)  (((s) >> 6)  & 0x3FFFU)
+#define ST_CANLOAD(s) (((s) >> 1)  & 0x1U)
+#define ST_IMGCNT(s)  (((s) >> 2)  & 0x3FFFU)
+/* result 는 STATUS 에서 제거 — bram_output(전용 AXI BRAM Ctrl, 0xC800_0000, 작업순서 2)에서 read */
 
 /* ===== Weight / input geometry ===== */
 #define IN_WORDS    196U    /* 784 byte / 4 (input BRAM Port A words per image) */
@@ -130,7 +130,7 @@ int main(void)
     /* ---- 3. 이미지 루프 (serial): can_load 대기 → input write → img_ready
      *        → img_cnt 증가 대기 → 그 read 의 result ---- */
     xil_printf("[3] %u images...\r\n", (unsigned)N_IMAGES);
-    u32 matched = 0, prev_cnt = 0;
+    u32 prev_cnt = 0;
     for (u32 img = 0; img < N_IMAGES; img++) {
         u32 s, guard;
 
@@ -152,13 +152,13 @@ int main(void)
         }
         prev_cnt = ST_IMGCNT(s);
 
-        u32 r = ST_RESULT(s);
-        if (r == test_labels[img]) matched++;
-        if (img < 8U || r != test_labels[img])     /* 앞 8장 + 오답만 출력 */
-            xil_printf("  img %3u: result=%u exp=%u %s\r\n",
-                       (unsigned)img, (unsigned)r, (unsigned)test_labels[img],
-                       (r == test_labels[img]) ? "OK" : "X");
+        /* result(class)는 더 이상 STATUS 에 없음 — bram_output 에 누적되고, 루프 종료 후
+         * 0xC800_0000 에서 일괄 read 하여 test_labels 와 비교한다 (작업순서 2: output AXI
+         * BRAM Ctrl 추가 후 구현). 지금은 진행 상황만 출력. */
+        if (img < 8U)
+            xil_printf("  img %3u done (img_cnt=%u)\r\n", (unsigned)img, (unsigned)prev_cnt);
     }
+    (void)test_labels;   /* 작업순서 2 (bram_output read) 에서 사용 — unused 경고 억제 */
 
     /* ---- 4. 결과 + latency (48-bit timer; N<10000 이면 timer 미정지 → snapshot) ---- */
     u32 t_lo = Xil_In32(CSR_BASE + CSR_TIMER_LO);
@@ -166,7 +166,7 @@ int main(void)
     u32 us   = (t_hi == 0U) ? (t_lo / 100U) : 0xFFFFFFFFU;
 
     xil_printf("\r\n=== Result ===\r\n");
-    xil_printf("class match : %u / %u completed\r\n", (unsigned)matched, (unsigned)prev_cnt);
+    xil_printf("completed   : %u images (result 검증은 bram_output read 구현 후 — 작업순서 2)\r\n", (unsigned)prev_cnt);
     xil_printf("latency     : %u cyc (hi=%u) ~%u us @100MHz%s\r\n",
                (unsigned)t_lo, (unsigned)t_hi, (unsigned)us,
                (N_IMAGES == 10000U) ? "" : " [snapshot]");
