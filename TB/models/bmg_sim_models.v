@@ -13,8 +13,8 @@
 //     conv1_weight_bram 32b×64                    (SDP, L=2, regceb)
 //     bram_c1_to_c2     64b×2048                  (byte-write 8b, L=2)
 //     conv2_weight_bram 32b×1024                  (SDP, L=2, regceb)
-//     bram_c2_to_pool   128b×2048                 (L=1)
-//     fc_weight_bram    256b×1024                 (SDP, L=1)
+//     bram_c2_to_pool   128b×2048                 (L=2, regceb tie1)
+//     fc_weight_bram    256b×1024                 (SDP, L=2, regceb tie1)
 //////////////////////////////////////////////////////////////////////////////////
 
 // ===========================================================================
@@ -59,7 +59,7 @@ module bram_input (
     // L=2: core read register (ENB) + output primitive register (REGCEB tied 1)
     always @(posedge clkb) begin
         if (enb) doutb_i <= mem[addrb];     // core: ENB gated
-        doutb <= doutb_i;                   // output reg: 항상 follow (REGCEB=1)
+        doutb <= doutb_i;                   // output reg: 항상 follow
     end
 endmodule
 
@@ -189,7 +189,8 @@ module bram_c2_to_pool (
     input  wire         clkb,
     input  wire         enb,
     input  wire [10:0]  addrb,
-    output reg  signed [127:0] doutb
+    output reg  signed [127:0] doutb,
+    input  wire         regceb                 // ★ 출력 reg CE — engine 이 1'b1 상수 결선 (always-follow)
 );
     reg [127:0] mem [0:2047];
     reg signed [127:0] doutb_i;                // 1st stage: BRAM core read register (ENB gated)
@@ -203,16 +204,19 @@ module bram_c2_to_pool (
 
     always @(posedge clka) if (ena && wea) mem[addra] <= dina;
 
-    // L=2: core read register (ENB) + output primitive register (REGCEB tied 1)
+    // L=2: core read register (ENB) + output register (REGCEB gated, engine ties 1 → always-follow)
+    //   ★ conv weight BMG 와 동일 패턴: 마지막 read(p11) 직후 ENB=0 이어도 REGCEB=1 이라
+    //   core 가 hold 한 p11 을 output reg 가 propagate. REGCEB 미노출 시 실 IP 는 ENB-gated 로
+    //   동작 → p11 누락 → maxpool max 작아짐 (docs/ip_spec/block_memory_generator.md §3.4 정정).
     always @(posedge clkb) begin
-        if (enb) doutb_i <= mem[addrb];        // core: ENB gated
-        doutb <= doutb_i;                      // output reg: 항상 follow (REGCEB=1)
+        if (enb)    doutb_i <= mem[addrb];     // core: ENB gated
+        if (regceb) doutb   <= doutb_i;        // output reg: REGCEB gated (engine ties 1)
     end
 endmodule
 
 
 // ===========================================================================
-// fc_weight_bram : SDP 256b × 1024, L=1 (no regceb pin)
+// fc_weight_bram : SDP 256b × 1024, L=2 (Primitive Output Register + REGCEB tie1)
 //   Symmetric: Port A 256b write (byte-write, ×1024) / Port B 256b read (720 used)
 //   (tb_fc_engine.v 의 behavioral 정의와 동일 거동)
 // ===========================================================================
@@ -226,16 +230,27 @@ module fc_weight_bram (
     input  wire         clkb,
     input  wire         enb,
     input  wire [9:0]   addrb,
-    output reg  [255:0] doutb
+    output reg  [255:0] doutb,
+    input  wire         regceb              // 출력 reg CE — engine 이 1'b1 결선 (always-follow)
 );
     reg [255:0] mem [0:1023];
-    integer b;
+    reg [255:0] doutb_i;
+    integer b, mi_init;
+
+    initial begin
+        for (mi_init = 0; mi_init < 1024; mi_init = mi_init + 1) mem[mi_init] = 256'd0;
+        doutb_i = 256'd0; doutb = 256'd0;
+    end
 
     always @(posedge clka) if (ena)
         for (b = 0; b < 32; b = b + 1)
             if (wea[b]) mem[addra][b*8 +: 8] <= dina[b*8 +: 8];
 
-    always @(posedge clkb) if (enb) doutb <= mem[addrb];
+    // L=2: core read register (ENB) + output register (REGCEB gated, engine ties 1)
+    always @(posedge clkb) begin
+        if (enb)    doutb_i <= mem[addrb];  // core: ENB gated
+        if (regceb) doutb   <= doutb_i;     // output reg: REGCEB gated (engine ties 1)
+    end
 endmodule
 
 
@@ -253,7 +268,8 @@ module bram_pool_to_fc (
     input  wire         clkb,
     input  wire         enb,
     input  wire [8:0]   addrb,
-    output reg  [127:0] doutb
+    output reg  [127:0] doutb,
+    input  wire         regceb                 // ★ 출력 reg CE — cnn_accelerator 가 1'b1 결선 (always-follow)
 );
     reg [127:0] mem [0:511];
     reg [127:0] doutb_i;                       // 1st stage: BRAM core read register (ENB gated)
@@ -267,12 +283,50 @@ module bram_pool_to_fc (
 
     always @(posedge clka) if (ena && wea) mem[addra] <= dina;
 
-    // L=2: core read register (ENB) + output primitive register (REGCEB tied 1)
-    //   ★ 출력 reg 는 ENB 게이팅 금지 — FC 의 마지막 read (pair4 sp143) 직후 ENB(=comp_v)=0
-    //   이 되어도 REGCEB=1 (항상 follow) 이라야 sp143 이 doutb 까지 전파된다.
-    //   (enb 게이팅 시 sp143 이 stale(sp142) → pair4 logit(8,9) 오류; bram_c2_to_pool 와 동일.)
+    // L=2: core read register (ENB) + output register (REGCEB gated, engine ties 1 → always-follow)
+    //   ★ FC 마지막 read (pair4 sp143) 직후 ENB(=comp_v)=0 이어도 REGCEB=1 이라야 sp143 이
+    //   doutb 까지 전파. REGCEB 미노출 시 실 IP 는 ENB-gated → sp143 누락 → pair4 logit(8,9) 오류
+    //   (bram_c2_to_pool 의 p11 누락과 동일 원인). docs/ip_spec/block_memory_generator.md §4 정정.
     always @(posedge clkb) begin
-        if (enb) doutb_i <= mem[addrb];        // core: ENB gated
-        doutb <= doutb_i;                      // output reg: 항상 follow (REGCEB=1)
+        if (enb)    doutb_i <= mem[addrb];     // core: ENB gated
+        if (regceb) doutb   <= doutb_i;        // output reg: REGCEB gated (engine ties 1)
+    end
+endmodule
+
+// ===========================================================================
+// bram_output : Port A 8-bit write (×16384), Port B 32-bit read (×4096), L=1
+//   bram_input 의 거울 — PL 이 result 1 byte 누적(Port A) / PS 가 32b read(Port B).
+//   word read → 4 byte little-endian (byte 4k = doutb[7:0]). REGCEB 미노출(L=1).
+//   independent-clock IP 지만 TB/RTL 에선 clka=clkb=clk 로 묶어 사용 (common 동작).
+// ===========================================================================
+module bram_output (
+    input  wire        clka,
+    input  wire        ena,
+    input  wire        wea,                  // 1-bit (Byte Write Disable)
+    input  wire [13:0] addra,
+    input  wire [7:0]  dina,
+
+    input  wire        clkb,
+    input  wire        enb,
+    input  wire [11:0] addrb,
+    output reg  [31:0] doutb
+);
+    reg [7:0] mem [0:16383];
+
+    integer mi_init;
+    initial begin
+        for (mi_init = 0; mi_init < 16384; mi_init = mi_init + 1) mem[mi_init] = 8'd0;
+        doutb = 32'd0;
+    end
+
+    // Port A : 8-bit write (ENA AND WEA)
+    always @(posedge clka) if (ena && wea) mem[addra] <= dina;
+
+    // Port B : 32-bit read, L=1 (core read register, ENB gated). word k = byte 4k..4k+3 LE.
+    always @(posedge clkb) begin
+        if (enb) doutb <= { mem[{addrb, 2'b00} + 14'd3],
+                            mem[{addrb, 2'b00} + 14'd2],
+                            mem[{addrb, 2'b00} + 14'd1],
+                            mem[{addrb, 2'b00} + 14'd0] };
     end
 endmodule

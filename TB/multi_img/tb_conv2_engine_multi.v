@@ -111,7 +111,8 @@ module tb_conv2_engine_multi;
         .clkb  (clk),
         .enb   (c2pool_enb_b),
         .addrb (c2pool_addr_b),
-        .doutb (c2pool_doutb_b)
+        .doutb (c2pool_doutb_b),
+        .regceb (1'b1)
     );
 
     //==========================================================================

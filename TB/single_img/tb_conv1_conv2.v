@@ -120,7 +120,8 @@ module tb_conv1_conv2;
         .clka  (clk), .ena (c2pool_we_a), .wea (c2pool_we_a),
         .addra (c2pool_addr_a), .dina (c2pool_din_a),
         .clkb  (clk), .enb (c2pool_enb_b),
-        .addrb (c2pool_addr_b), .doutb (c2pool_doutb_b)
+        .addrb (c2pool_addr_b), .doutb (c2pool_doutb_b),
+        .regceb (1'b1)
     );
 
     //==========================================================================

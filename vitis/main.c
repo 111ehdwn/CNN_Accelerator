@@ -54,7 +54,7 @@
 #include "conv1_weights_simd.h"   /* conv1_weights_simd[36]    (직접 write) */
 #include "conv2_weights_simd.h"   /* conv2_weights_simd[576]   (직접 write) */
 #include "fc_weights_simd.h"      /* fc_weights_simd[11520]    (변환 후 write) */
-#include "test_images.h"          /* test_images[N*784], test_labels[N], TEST_N_IMAGES */
+#include "test_images.h"          /* test_images[N*196] uint32 (pre-packed), test_labels[N], TEST_N_IMAGES */
 
 #define N_IMAGES   TEST_N_IMAGES
 #define POLL_GUARD 50000000U      /* 무한 hang 방지 (이 횟수 넘으면 STATUS 덤프 후 중단) */
@@ -95,18 +95,16 @@ static void fc_write_weights(void)
     }
 }
 
-/* ---- 이미지 1장을 빈 bank 에 write (little-endian word pack) ---- */
+/* ---- 이미지 1장을 빈 bank 에 write ----
+ *   test_images 는 gen script 가 이미 input BRAM Port A 포맷(little-endian uint32)으로
+ *   패킹해 둠 → PS 는 byte-combine 없이 word 를 그대로 전송만 한다 (전송 병목 완화). */
 static void write_image(u32 img)
 {
     u32 bank = img & 1U;                       /* bank = img index LSB (accel 내부 sync) */
-    const uint8_t *p = &test_images[img * 784U];
+    const uint32_t *p = &test_images[img * IN_WORDS];
     for (u32 i = 0; i < IN_WORDS; i++) {
-        u32 w = (u32)p[i * 4 + 0]
-              | ((u32)p[i * 4 + 1] << 8)
-              | ((u32)p[i * 4 + 2] << 16)
-              | ((u32)p[i * 4 + 3] << 24);
         /* word 주소: bank0 = 0..195, bank1 = 256..451 (MSB=bit8=bank) */
-        Xil_Out32(INPUT_BASE + (bank * 256U + i) * 4U, w);
+        Xil_Out32(INPUT_BASE + (bank * 256U + i) * 4U, p[i]);
     }
 }
 

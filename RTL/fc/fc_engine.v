@@ -26,8 +26,8 @@
 //     [255:128] : odd  output column weights, 16ch
 //
 //   BRAM read latency:
-//     input BRAM  = 1 cycle
-//     weight BRAM = 1 cycle
+//     poolfc (input) BRAM = 2 cycle (L=2, 300MHz)
+//     weight BRAM         = 2 cycle (L=2, Primitive Output Register + REGCEB tie1)
 //////////////////////////////////////////////////////////////////////////////////
 
 module fc_engine #(
@@ -48,7 +48,7 @@ module fc_engine #(
 
     //==========================================================================
     // poolfc buffer read port
-    //   128-bit × 512 (2 bank × 256), 1-cycle read latency.
+    //   128-bit × 512 (2 bank × 256), 2-cycle read latency (L=2, bram_pool_to_fc).
     //   addr = {input_bank_sel, s_cnt[7:0]} — bank=0: 0..143, bank=1: 256..399.
     //==========================================================================
     output wire         poolfc_re,
@@ -111,7 +111,8 @@ module fc_engine #(
     assign poolfc_addr = {fsm_input_bank_sel, fsm_s_cnt};
 
     //==========================================================================
-    // 3. Weight BRAM, 256-bit x 720, 1-cycle read latency
+    // 3. Weight BRAM, 256-bit x 720, L=2 read latency
+    //    (Primitive Output Register ON + REGCEB tie1 → always-follow)
     //==========================================================================
     wire [9:0]   fcw_addrb = fsm_wbase + {2'd0, fsm_s_cnt};
     wire [255:0] fcw_doutb;
@@ -126,34 +127,30 @@ module fc_engine #(
         .clkb   (clk),
         .enb    (fsm_comp_v),
         .addrb  (fcw_addrb),
-        .doutb  (fcw_doutb)
+        .doutb  (fcw_doutb),
+        .regceb (1'b1)                     // 출력 reg always-follow (마지막 weight sp143 전파)
     );
 
-    // ★ poolfc_bmg 에 output primitive register 추가 → poolfc_dout read latency L=1→2.
-    //   fc_weight_bram 은 L=1 이라, DSP 에서 x(poolfc, T+2)·weight 정렬을 맞추려면
-    //   weight 출력을 fabric register 1 단(fcw_doutb_r)으로 받아 둘 다 T+2 에 도착시킨다.
-    //   이 단은 정렬뿐 아니라 weight read 의 300MHz 타이밍도 닫는다: 느린 BRAM
-    //   clock-to-out(L=1, ~2.x ns)을 BRAM 인접 fabric FF 로 끊어, 이후 DSP 까지는
-    //   fresh cycle 로 보낸다. (배치상 fcw_doutb_r 은 weight BRAM 근처에 두는 것이 유리.)
-    reg [255:0] fcw_doutb_r;
-    always @(posedge clk) begin
-        if (rst) fcw_doutb_r <= 256'd0;
-        else     fcw_doutb_r <= fcw_doutb;
-    end
+    //   weight BRAM 을 poolfc 와 동일하게 L=2 (BMG output primitive register) 로 두어
+    //   weight(fcw_doutb) 와 x(poolfc_dout) 가 둘 다 T+2 에 도착하도록 정렬한다.
+    //   (구: fc_weight_bram L=1 + fabric reg fcw_doutb_r 로 +1 했으나, IP output reg 로
+    //    통일 — conv weight BMG 와 동일 방식. REGCEB=1 로 마지막 weight(pair4 sp143) propagation
+    //    보장. abrupt-stop(comp_v drop) 에서 REGCEB 미노출이면 ENB-gated → 누락; 그래서 tie1.)
+    //   L=2 output register 는 300MHz weight read 타이밍도 닫는다 (clock-to-out ~0.45ns).
 
     // User-defined packing:
     //   MSB side = odd column  16 weights
     //   LSB side = even column 16 weights
-    wire [127:0] w_even_flat = fcw_doutb_r[127:0];
-    wire [127:0] w_odd_flat  = fcw_doutb_r[255:128];
+    wire [127:0] w_even_flat = fcw_doutb[127:0];
+    wire [127:0] w_odd_flat  = fcw_doutb[255:128];
 
     //==========================================================================
     // 4. Valid/control alignment
     //
     // PE 는 공용 core/pe_cell (DSP 3-stage + 출력 reg = 4-cycle latency).
     // Timeline for an issued spatial word at cycle T
-    //   (poolfc L=2: output primitive register / weight L=1 + fcw_doutb_r → 둘 다 T+2 도착):
-    //   T+2 : x(poolfc_dout) & weight(fcw_doutb_r) valid — PE inputs valid (combinational)
+    //   (poolfc L=2 & weight L=2: 둘 다 BMG output primitive register → T+2 도착):
+    //   T+2 : x(poolfc_dout) & weight(fcw_doutb) valid — PE inputs valid (combinational)
     //   T+3 : DSP A/B latch              — pe_en @ T+2 = 1 필요
     //   T+4 : DSP M latch                — pe_en @ T+3 = 1 필요
     //   T+5 : DSP P latch                — pe_en @ T+4 = 1 필요

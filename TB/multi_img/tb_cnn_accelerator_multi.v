@@ -55,6 +55,14 @@ module tb_cnn_accelerator_multi;
     wire       img_done;
     wire       input_consumed;
 
+    // Output result BRAM Port B (PS read) — bram_output readback 검증
+    reg         res_rd_en   = 1'b0;
+    reg  [11:0] res_rd_addr = 12'd0;
+    wire [31:0] res_rd_data;
+    integer     rb_word, rb_i, rb_base, rb_pass;
+    reg  [31:0] rb_data;
+    reg  [3:0]  rb_res, rb_exp;
+
     //==========================================================================
     // PS-write BMG Port A
     //==========================================================================
@@ -94,7 +102,8 @@ module tb_cnn_accelerator_multi;
         .in_ena (in_ena), .in_wea (in_wea), .in_addra (in_addra), .in_dina (in_dina),
         .c1w_ena (c1w_ena), .c1w_wea (c1w_wea), .c1w_addra (c1w_addra), .c1w_dina (c1w_dina),
         .c2w_ena(c2w_ena), .c2w_wea(c2w_wea), .c2w_addra(c2w_addra), .c2w_dina(c2w_dina),
-        .fcw_ena(fcw_ena), .fcw_wea(fcw_wea), .fcw_addra(fcw_addra), .fcw_dina(fcw_dina)
+        .fcw_ena(fcw_ena), .fcw_wea(fcw_wea), .fcw_addra(fcw_addra), .fcw_dina(fcw_dina),
+        .res_rd_en(res_rd_en), .res_rd_addr(res_rd_addr), .res_rd_data(res_rd_data)
     );
 
     //==========================================================================
@@ -271,6 +280,29 @@ module tb_cnn_accelerator_multi;
 
         wait (all_done == 1'b1);
 
+        // ---- bram_output readback 검증 (PS emul: 종료 후 res_rd_* 로 일괄 read) ----
+        //   word k = image 4k..4k+3 의 result (byte 의 low 4-bit). overlap 으로 다 처리된
+        //   뒤 읽어 "파이프라이닝 중 결과 손실 없음" 입증 (cnn `result` 출력과 독립 경로).
+        rb_pass = 0;
+        if (CHECK_LABEL) begin
+            for (rb_word = 0; rb_word < (N_IMAGES + 3) / 4; rb_word = rb_word + 1) begin
+                @(negedge clk); res_rd_en = 1'b1; res_rd_addr = rb_word[11:0];
+                @(posedge clk);                        // L=1 read: doutb <= mem[rb_word]
+                @(negedge clk); rb_data = res_rd_data; // doutb 안정
+                for (rb_i = 0; rb_i < 4; rb_i = rb_i + 1) begin
+                    rb_base = rb_word*4 + rb_i;
+                    if (rb_base < N_IMAGES) begin
+                        rb_res = rb_data[rb_i*8 +: 4];      // {4'b0, digit} 의 digit
+                        rb_exp = exp_argmax(rb_base*10);
+                        if (rb_res === rb_exp) rb_pass = rb_pass + 1;
+                        else $display("[TB] readback img %0d : FAIL  bram=%0d exp=%0d",
+                                      rb_base, rb_res, rb_exp);
+                    end
+                end
+            end
+            @(negedge clk); res_rd_en = 1'b0;
+        end
+
         // Final report
         $display("\n=========================================");
         $display("  FINAL : results %0d / %0d", results_seen, N_IMAGES);
@@ -281,8 +313,9 @@ module tb_cnn_accelerator_multi;
                  last_result_cyc - first_result_cyc, N_IMAGES-1,
                  (N_IMAGES > 1) ? (last_result_cyc - first_result_cyc) / (N_IMAGES-1) : 0);
         if (CHECK_LABEL) begin
-            if (images_pass == N_IMAGES)
-                $display("  *** PASS *** (all %0d result+logit bit-exact, overlap)", N_IMAGES);
+            $display("  bram_output readback : %0d / %0d", rb_pass, N_IMAGES);
+            if (images_pass == N_IMAGES && rb_pass == N_IMAGES)
+                $display("  *** PASS *** (result+logit bit-exact + bram_output readback, overlap)");
             else
                 $display("  *** FAIL ***");
         end

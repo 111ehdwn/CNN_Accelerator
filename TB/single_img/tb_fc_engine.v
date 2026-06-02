@@ -390,7 +390,7 @@ endmodule
 // fc_weight_bram behavioral model
 //   Simple Dual-Port, 256-bit × 1024 (BMG spec depth; 720 entries 사용).
 //   Port A: write only — ENA + WEA 둘 다 결선 필요 (실제 BMG 거동과 일치).
-//   Port B: read with L=1 (Primitive Output Register Disable).
+//   Port B: read with L=2 (Primitive Output Register + REGCEB tie1, engine ties 1).
 //
 //   ★ Vivado 프로젝트에 실제 fc_weight_bram BMG IP 가 있으면 이 module 을
 //     주석 처리하거나 다른 파일로 분리하세요 (duplicate 정의 충돌 방지).
@@ -405,14 +405,16 @@ module fc_weight_bram (   // SYMMETRIC: Port A 256b write (byte-write, ×1024) /
     input  wire         clkb,
     input  wire         enb,
     input  wire [9:0]   addrb,
-    output reg  [255:0] doutb
+    output reg  [255:0] doutb,
+    input  wire         regceb              // 출력 reg CE — engine 이 1'b1 결선 (always-follow)
 );
     reg [255:0] mem [0:1023];
+    reg [255:0] doutb_i;
 
     integer mi, b;
     initial begin
         for (mi = 0; mi < 1024; mi = mi + 1) mem[mi] = 256'd0;
-        doutb = 256'd0;
+        doutb_i = 256'd0; doutb = 256'd0;
     end
 
     always @(posedge clka) begin
@@ -421,7 +423,9 @@ module fc_weight_bram (   // SYMMETRIC: Port A 256b write (byte-write, ×1024) /
                 if (wea[b]) mem[addra][b*8 +: 8] <= dina[b*8 +: 8];
     end
 
+    // L=2: core read register (ENB) + output register (REGCEB gated, engine ties 1)
     always @(posedge clkb) begin
-        if (enb) doutb <= mem[addrb];
+        if (enb)    doutb_i <= mem[addrb];  // core: ENB gated
+        if (regceb) doutb   <= doutb_i;     // output reg: REGCEB gated (engine ties 1)
     end
 endmodule

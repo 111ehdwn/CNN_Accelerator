@@ -84,7 +84,8 @@ module tb_maxpool_engine;
         .clkb  (clk),
         .enb   (c2pool_rd_en),
         .addrb (c2pool_rd_addr),               // maxpool 이 physical addr 직접 출력 (single img → bank 0)
-        .doutb (c2pool_rd_data)
+        .doutb (c2pool_rd_data),
+        .regceb (1'b1)                         // 출력 reg always-follow (마지막 read p11 전파)
     );
 
     //==========================================================================

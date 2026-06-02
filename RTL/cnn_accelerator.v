@@ -78,7 +78,17 @@ module cnn_accelerator (
     input  wire         fcw_ena,
     input  wire [31:0]  fcw_wea,
     input  wire [9:0]   fcw_addra,
-    input  wire [255:0] fcw_dina
+    input  wire [255:0] fcw_dina,
+
+    //==========================================================================
+    // Output result BRAM Port B  (PS read via AXI BRAM Ctrl — bram_output)
+    //   PL 이 img_done 마다 result 1 byte 누적(Port A, 내부) / PS 가 32b burst read(Port B).
+    //   word k = image 4k..4k+3 의 result (little-endian: img4k = res_rd_data[7:0]).
+    //   res_rd_addr = word 주소 (AXI byte addr >> 2 — block design 에서 slice).
+    //==========================================================================
+    input  wire        res_rd_en,
+    input  wire [11:0] res_rd_addr,
+    output wire [31:0] res_rd_data
 );
 
     //==========================================================================
@@ -162,7 +172,8 @@ module cnn_accelerator (
         .addra (c2pool_addr_a), .dina (c2pool_din_a),
         .clkb  (clk), .enb (c2pool_re_b),
         .addrb (maxpool_c2pool_rd_addr),
-        .doutb (c2pool_doutb_b)
+        .doutb (c2pool_doutb_b),
+        .regceb (1'b1)                          // 출력 reg always-follow (마지막 read p11 전파)
     );
 
     // poolfc: maxpool write(Port A, physical {output_bank_sel,addr}) / fc read(Port B)
@@ -170,7 +181,8 @@ module cnn_accelerator (
         .clka  (clk), .ena (poolfc_wr_en), .wea (poolfc_wr_en),
         .addra (poolfc_wr_addr), .dina (poolfc_wr_data),
         .clkb  (clk), .enb (fc_poolfc_re),
-        .addrb (fc_poolfc_addr), .doutb (fc_poolfc_dout)
+        .addrb (fc_poolfc_addr), .doutb (fc_poolfc_dout),
+        .regceb (1'b1)                          // 출력 reg always-follow (FC 마지막 read sp143 전파)
     );
 
     //==========================================================================
@@ -298,5 +310,37 @@ module cnn_accelerator (
     // input-consumed: conv1 이 input BRAM read 를 끝낸 시점(RUN2 끝) 의 1-cycle pulse.
     //   PS 가 같은 bank 에 다음 image(i+2) 를 안전하게 write 할 수 있는 backpressure 신호.
     assign input_consumed = conv1_rdone;
+
+    //==========================================================================
+    // Output result store (bram_output) — per-image 결과 누적  [작업순서 1]
+    //   img_done 마다 result_r(4-bit) 를 1 byte 로 res_wr_ptr(=image index) 에 write.
+    //   res_wr_ptr 은 CSR img_cnt 와 동일 이벤트(img_done)·동일 cap(10000) → 자동 동기.
+    //   PS 는 Port B(res_rd_*)로 종료 후 일괄 read → 파이프라이닝(overlap) 중에도 결과
+    //   손실 없음 (단일 CSR result_latch 가 다음 image 에 덮이는 문제 해소).
+    //   bram_output: SDP 비대칭 8(write)/32(read), independent-clock IP 를 clka=clkb=clk
+    //   로 묶어 현재 common 동작 (overclock 시 clkb 만 AXI 로 분리; 재생성 불필요).
+    //==========================================================================
+    reg  [13:0] res_wr_ptr;
+    wire        res_we  = img_done_r && (res_wr_ptr < 14'd10000);  // image 0..9999
+    wire [7:0]  res_din = {4'b0000, result_r};                     // {pad, digit}
+
+    always @(posedge clk) begin
+        if (rst)         res_wr_ptr <= 14'd0;
+        else if (res_we) res_wr_ptr <= res_wr_ptr + 14'd1;
+    end
+
+    bram_output res_bmg (
+        // Port A — PL write (8-bit), result-writer
+        .clka  (clk),
+        .ena   (res_we),                 // ENA = WEA = img_done (cap 10000)
+        .wea   (res_we),                 // 1-bit (Byte Write Disable)
+        .addra (res_wr_ptr),             // 14-bit image index
+        .dina  (res_din),                // 8-bit {pad, result}
+        // Port B — PS read (32-bit) via AXI BRAM Ctrl
+        .clkb  (clk),
+        .enb   (res_rd_en),
+        .addrb (res_rd_addr),            // 12-bit word addr
+        .doutb (res_rd_data)             // 32-bit = 4 results
+    );
 
 endmodule

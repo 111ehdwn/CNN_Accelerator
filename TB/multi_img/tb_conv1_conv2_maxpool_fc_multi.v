@@ -193,7 +193,8 @@ module tb_conv1_conv2_maxpool_fc_multi;
         .addra (c2pool_addr_a), .dina (c2pool_din_a),
         .clkb  (clk), .enb (c2pool_re_b),
         .addrb (maxpool_c2pool_rd_addr),         // maxpool physical addr 직접 출력 (11-bit)
-        .doutb (c2pool_doutb_b)
+        .doutb (c2pool_doutb_b),
+        .regceb (1'b1)                           // 출력 reg always-follow (마지막 read p11 전파)
     );
 
     //==========================================================================
