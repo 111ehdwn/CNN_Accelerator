@@ -5,6 +5,8 @@ IP 재생성 / 새 팀원 onboarding / 인터페이스 충돌 디버깅 시 참�
 
 각 IP 의 Verilog port signature 와 engine 측 결선까지 명시. 변경 시 본 문서 최신화 필수.
 
+> 📷 스크린샷(`<ip>/<ip>-<tab>.png`)은 **2026-06-02 최종 구성** 기준 (300MHz: 전 IP L=2; REGCEB 정책 — abrupt-stop[c2pool·poolfc·weight]=노출, conv-input[bram_input·c1c2]=미노출).
+
 ---
 
 ## 1. 전체 IP 목록 (한눈에)
@@ -12,17 +14,18 @@ IP 재생성 / 새 팀원 onboarding / 인터페이스 충돌 디버깅 시 참�
 | Component | Width A / B | Depth A / B | L | Byte Write | Primitive Output Reg | REGCEB Pin | 사용처 (write → read) |
 |---|---|---|---|---|---|---|---|
 | **`bram_c1_to_c2`** | 64 / 64 | 2048 / 2048 | 2 | ✓ (8-bit wea) | ✓ Enable | 미노출 (내부 tie 1) | Conv1 → Conv2 (ping-pong) |
-| **`bram_c2_to_pool`** | 128 / 128 | 2048 / 2048 | 1 | ✗ (1-bit wea) | ✗ Disable | N/A | Conv2 → Maxpool (ping-pong) |
+| **`bram_c2_to_pool`** | 128 / 128 | 2048 / 2048 | 2 | ✗ (1-bit wea) | ✓ Enable | **✓ 노출 (engine 1 결선)** ★ | Conv2 → Maxpool (ping-pong). 300MHz 위해 L=1→L=2 + 출력 reg REGCEB 노출 (abrupt-stop p11, §3.4) |
 | **`conv2_weight_bram`** | 32 / 32 | 1024 / 1024 | 2 | ✗ (1-bit wea) | ✓ Enable | ✓ 노출 (engine 에서 상수 1 결선) | PS → Conv2 weight |
-| **`bram_input`** | **32 / 8** (asymmetric) | **512 / 2048** | **1** | ✗ (1-bit wea) | **✗ Disable** | N/A (Output Reg 없음) | PS → Conv1 input image (ping-pong, 2 bank × 1024 byte). Port A = AXI burst 32-bit. Port B = Conv1 byte read. |
+| **`bram_input`** | **32 / 8** (asymmetric) | **512 / 2048** | **2** ★ | ✗ (1-bit wea) | **✓ Enable** ★ | 미노출 (내부 tie 1) | PS → Conv1 input image (ping-pong, 2 bank × 1024 byte). Port A = AXI burst 32-bit. Port B = Conv1 byte read. ★ 300MHz: L=1→L=2 (§6.2). |
 | **`conv1_weight_bram`** | 32 / 32 | 64 / 64 | 2 | ✗ (1-bit wea) | ✓ Enable | ✓ 노출 (engine 에서 상수 1 결선) | PS → Conv1 weight |
-| **`bram_pool_to_fc`** | 128 / 128 | 512 / 512 | 1 | ✗ (1-bit wea) | ✗ Disable | N/A | Maxpool → FC (ping-pong, 2 bank × 144 + padding) |
-| **`fc_weight_bram`** (사용 중, IP 캡처 대기) | 256 / 256 | 1024 / 1024 | 1 | ✗ (1-bit wea) | ✗ Disable | N/A | PS → FC weight. RTL/fc/fc_engine.v:105 에서 instantiate. IP 캡처 추가 시 spec 확정. |
+| **`bram_pool_to_fc`** | 128 / 128 | 512 / 512 | **2** ★ | ✗ (1-bit wea) | **✓ Enable** | **✓ 노출 (engine 1 결선)** ★ | Maxpool → FC (ping-pong, 2 bank × 144 + padding). 300MHz 위해 L=1→L=2 + 출력 reg REGCEB 노출 (abrupt-stop sp143, §4.4) |
+| **`fc_weight_bram`** | 256 / 256 | 1024 / 1024 | **2** ★ | **✓ (32-bit wea, byte size 8)** | **✓ Enable** | **✓ 노출 (engine 1 결선)** ★ | PS → FC weight (720 used). Port A=256b 라 **256-bit AXI BRAM Ctrl + 32→256 datawidth converter** 필요 (firmware 5760×32b write, §8.4). `RTL/fc/fc_engine.v` 에서 instantiate. 300MHz: L=2 + REGCEB 노출 (abrupt-stop sp143). |
+| **`bram_output`** | 8 / 32 (asymmetric) | 16384 / 4096 | 1 | ✗ | ✗ (L=1) | 미노출 | **PL result → PS** (per-image read 제거). `img_done` 마다 1 byte 누적, PS 가 끝에 32-bit burst read. 전용 AXI BRAM Ctrl + 입력 AXI CDMA. **independent-clock** (clka/clkb tie `clk`→common, overclock 시 분리). 설계 `output_result_bram.md`, 스샷 `bram_output/` |
 
 **공통 설정 (모든 BMG)**:
 - Interface Type: **Native**
 - Memory Type: **Simple Dual Port RAM** (SDP) — write/read 분리
-- Common Clock: **✓ 체크** (단일 clock domain, clka=clkb=clk)
+- Common Clock: **✓ 체크** (단일 clock domain, clka=clkb=clk) — **단 `bram_output` 만 ✗(independent)**: clka/clkb 를 `clk` 로 묶어 common 동작, overclock 대비 future-proof
 - ECC Type: No ECC
 - Algorithm: Minimum Area
 
@@ -111,8 +114,8 @@ Conv2 의 16 OC × 24×24 output 을 Maxpool 의 input BRAM 으로 전달. 2 ban
 | Port B | Port B Depth | 2048 |
 | Port B | Operating Mode | Write First |
 | Port B | Enable Port Type | Use ENB Pin |
-| Port B | Primitives Output Register | **✗ 미체크** (L=1) |
-| Port B | REGCEB Pin | N/A (Output Reg 없음) |
+| Port B | Primitives Output Register | **✓ Enable** (L=2) |
+| Port B | REGCEB Pin | **✓ 체크 (노출)** — engine 에서 `1'b1` 결선 (abrupt-stop p11 전파; §3.4·§A.2) |
 
 ### 3.3 Port signature
 
@@ -131,13 +134,30 @@ bram_c2_to_pool inst (
 );
 ```
 
-### 3.4 왜 L=1 (Primitive Output Register Disable)?
+### 3.4 왜 L=2 (Primitive Output Register Enable)? — 300MHz 오버클럭
 
-`RTL/maxpool/maxpool_fsm.v` 의 phase counting 이 **L=1 가정**.
-- maxpool 이 cycle T 에 addr 발행 → cycle T+1 에 doutb 받음.
-- L=2 (Primitive Output Reg ON) 으로 두면 dout 이 1 cycle 더 늦게 와서 phase counter 와 misalign → mismatch.
+**타이밍 사유 (300MHz, period 3.333ns @ xc7a100t-1)**: maxpool 의 유일한 임계 경로는
+`c2pool BRAM doutb → p00/p01/p10/p11_flat 캡처 FF` (로직 0, BRAM clock-to-out + 128b
+광대역 라우팅만). Artix-7 −1 의 Block RAM 정격 Fmax(388MHz)는 output register 사용 전제 —
+L=1 (output reg OFF) 은 array latch clock-to-out(~2.3ns) 이 커서 300MHz 에서 negative
+slack. L=2 (output reg ON) 은 clock-to-out 이 ~0.45ns 로 줄어 약 +1.8ns 슬랙 확보.
 
-자세한 분석은 `RTL/maxpool/maxpool_fsm.v` (6-phase logic) 참조.
+> ⚠️ **L=2 는 maxpool_fsm 의 phase counting 수정과 반드시 묶여야 한다.**
+> L=2 는 doutb 가 L=1 대비 1 cycle 늦게 도착하므로, `RTL/maxpool/maxpool_fsm.v` 의 capture
+> phase 를 +1 시프트했다 (6-phase 0~5 → **7-phase 0~6**). 주소 발행(phase 0~3)·rd_en
+> 스케줄은 그대로, capture 만 phase 3/4/5/6 (p00/p01/p10/p11) 으로 이동.
+>
+> **REGCEB pin 노출 + engine `1'b1` 상수 결선 필수.** 마지막 read(p11) 가 phase 3 에서 발행된 뒤
+> phase 4~6 에서 ENB=0 이 되어도, output reg 가 항상 core 를 follow(REGCEB=1) 해야 p11 이
+> doutb 까지 전파된다. ENB 와 묶이면 p11 누락 → max 작아짐 (weight BMG §5.5 와 동일 이슈).
+>
+> ⚠️ **정정 (2026-06-02):** 과거 "c1c2 처럼 REGCEB 미노출 + 내부 tie-1" 로 적었으나 **틀렸음**.
+> REGCEB 미노출 시 Vivado 는 출력 reg CE 를 1 이 아니라 **ENB 에 tie** → abrupt-stop 인 c2pool 은
+> p11 누락. c1c2/bram_input 은 *연속 read* 라 미노출이 무해했을 뿐. c2pool 은 conv weight BMG 처럼
+> **노출+tie1** 이어야 한다. 실 IP 검증: maxpool 단독 + end-to-end Vivado PASS (2026-06-02). (§A.2)
+
+cycle-by-cycle 동작은 `RTL/maxpool/maxpool_fsm.v` (7-phase logic) 및 `bmg_sim_models.v`
+의 `bram_c2_to_pool` (L=2 2-stage 모델) 참조. 변경 전(L=1)은 git 이력 참조.
 
 ### 3.5 참고 스크린샷
 
@@ -173,8 +193,8 @@ Maxpool 의 16 OC × 12×12 = 144 spatial word (각 word = 16 ch × 8b packed) �
 | Port B | Port B Depth | 512 |
 | Port B | Operating Mode | Read First |
 | Port B | Enable Port Type | Use ENB Pin |
-| Port B | Primitives Output Register | **✗ Disable** (L=1) |
-| Port B | REGCEB Pin | N/A (Output Reg 없음) |
+| Port B | Primitives Output Register | **✓ Enable** (L=2) ★ 300MHz |
+| Port B | REGCEB Pin | **✓ 체크 (노출)** — engine `1'b1` 결선 (abrupt-stop sp143 전파; §4.4·§A.2) |
 
 ### 4.3 Port signature
 
@@ -193,14 +213,16 @@ bram_pool_to_fc inst (
 );
 ```
 
-### 4.4 왜 L=1 (Primitive Output Register Disable)?
+### 4.4 왜 L=2 (Primitive Output Register Enable)? — 300MHz
 
-`RTL/fc/fc_engine.v` 의 timeline (line 126-131):
-- T+1 : input/weight BRAM dout valid → PE samples
-- T+2 : PE output register updated
-- ...
+⚠️ **정정 (2026-06-02): 과거 L=1 이었으나 300MHz refactor 로 L=2 전환.** `bram_c2_to_pool`/`bram_input`
+과 동일 사유 (Artix-7 −1 BRAM 정격 Fmax 가 output reg 전제). `RTL/fc/fc_engine.v` 가 poolfc L=2 에
+맞춰 정렬됨: `CTRL_DELAY` 8→9, pe/adder/acc tap 전부 +1 시프트.
 
-즉 FC pipeline 이 **L=1 가정**. L=2 로 두면 dout 이 1 cycle 늦게 와서 PE input 과 misalign → bit-exact 깨짐.
+**REGCEB 노출 필수 (engine `1'b1` 결선):** FC 의 마지막 read (pair4 sp143) 직후 `comp_v`(=ENB)=0 이
+되어도 출력 reg 가 always-follow 여야 sp143 이 doutb 까지 전파된다. 미노출이면 실 IP 가 ENB-gated 라
+sp143 누락 → pair4 logit(OC8,9) 오류 (`bram_c2_to_pool` p11 누락과 동일 원인; §A.2). 검증: real
+poolfc IP 경로 `tb_cnn_accelerator_multi` 40/40 PASS (iverilog, 2026-06-02).
 Maxpool 측 (write) 는 L 영향 없음 (write only port).
 
 ### 4.5 왜 Depth 512 (실제 valid 288)?
@@ -324,11 +346,19 @@ Conv1 의 input streaming 이 **8-bit byte read**. Port A/B width 가 다른 **a
 | Port B | Port B Depth | 2048 (자동 — Vivado 가 A=32×512 와 같은 메모리 크기로 맞춤) |
 | Port B | Operating Mode | Read First (강제도 OK) |
 | Port B | Enable Port Type | Use ENB Pin |
-| Port B | **Primitives Output Register** | **✗ 미체크 (L=1)** |
+| Port B | **Primitives Output Register** | **✓ Enable (L=2)** ★ 300MHz |
 | Port B | Core Output Register | ✗ |
-| Port B | REGCEB Pin | N/A (Output Reg 없음) |
+| Port B | REGCEB Pin | 미노출 (Vivado 내부 tie-1) |
 
-> **왜 L=1?** `conv1_design.md §4` 와 `conv1_fsm` 의 6-cycle pipeline 가정이 BRAM L=1. broadcast fanout 도 작음 (8-bit single output → line_buffer 한 곳) → output register 불필요. L=2 로 두면 1 cycle 어긋남 → 출력 오염.
+> **왜 L=2? — 300MHz 오버클럭** (target `xc7a100t-csg324-1`, speed grade −1).
+> Artix-7 −1 BRAM 정격 Fmax 388MHz 는 **output register 전제**. L=1 (core reg only) 은
+> BRAM clock-to-out ~2.3ns + window 캡처 경로가 300MHz(3.33ns) 에서 negative slack →
+> L=2 로 clock-to-out ~0.45ns (~+1.8ns 슬랙). `bram_c2_to_pool`/maxpool 와 동일 근거.
+> conv1 은 L=2 의 +1 cycle latency 를 `conv1_fsm` 의 OUT_DELAY(=L+N+4=10) 로 흡수
+> (cycle-by-cycle 증명: `docs/conv1_timing.md`). REGCEB 미노출 — read 가 RUN/FLUSH 동안
+> 연속(enb=pipe_en)이라 마지막 데이터가 FLUSH 중 propagate (conv2 c1c2 와 동일 케이스).
+>
+> ⚠️ 과거 L=1 이었음 (구 conv1 6-cycle pipeline 가정). 300MHz refactor 로 L=2 전환.
 
 ### 6.3 Port signature
 
@@ -388,6 +418,7 @@ end
 
 Pre-packed Conv1 SIMD weight (36 entry × 32-bit) 를 PS 가 write,
 weight_loader 가 read 하여 18 PE 적재 (시스템 시작 시 1회).
+인스턴스 위치: `conv1_engine.v` 내부 (`c1w_bmg_inst`) — conv2/fc weight 와 일관 (Port A 만 외부 passthrough).
 
 ### 7.2 Vivado 설정
 
@@ -410,17 +441,18 @@ weight_loader 가 read 하여 18 PE 적재 (시스템 시작 시 1회).
 ### 7.3 Port signature
 
 ```verilog
-conv1_weight_bram inst (
+// conv1_engine.v 내부 인스턴스 (c1w_bmg_inst)
+conv1_weight_bram c1w_bmg_inst (
     .clka  (clk),
-    .ena   (w_ena),                 // ENA + WEA 둘 다 결선 필수 (Conv2 weight 와 동일)
-    .wea   (w_wea),
-    .addra (6-bit),
-    .dina  (32-bit),                // SIMD packed weight (W1*2^17 + W0)
+    .ena   (c1w_ena),               // ENA + WEA 둘 다 결선 필수 (Conv2 weight 와 동일)
+    .wea   (c1w_ena),
+    .addra (c1w_addra),             // 6-bit, PS write Port A
+    .dina  (c1w_dina),              // 32-bit SIMD packed weight (W1*2^17 + W0)
 
     .clkb  (clk),
-    .enb   (w_bram_en),
-    .addrb (w_bram_addr = 6-bit),
-    .doutb (w_bram_dout = 32-bit),
+    .enb   (w_bram_en),             // weight_loader ↔ 내부 wire
+    .addrb (w_bram_addr),           // 6-bit
+    .doutb (w_bram_dout),           // 32-bit
     .regceb(1'b1)                   // 마지막 weight propagation 보장
 );
 ```
@@ -438,14 +470,14 @@ conv1_weight_bram inst (
 
 ---
 
-## 8. `fc_weight_bram` — PS → FC weight (IP 캡처 대기)
+## 8. `fc_weight_bram` — PS → FC weight
 
 ### 8.1 용도
 
 Pre-packed FC SIMD weight (720 entry × 256-bit, 256 = 2×128 = 2 output column × 16 input channel × 8b) 를 PS 측에서 write,
 `fc_fsm` 의 `fcw_addrb = wbase + s_cnt` (pair-major) 으로 read.
 
-### 8.2 추정 Vivado 설정 (캡처 추가 시 확정)
+### 8.2 Vivado 설정
 
 | Tab | 항목 | 값 |
 |---|---|---|
@@ -460,23 +492,24 @@ Pre-packed FC SIMD weight (720 entry × 256-bit, 256 = 2×128 = 2 output column 
 | Port B | Port B Depth | 1024 |
 | Port B | Operating Mode | Read First |
 | Port B | Enable Port Type | Use ENB Pin |
-| Port B | Primitives Output Register | **✗ Disable** (L=1, fc_engine.v:21 코멘트 기준) |
-| Port B | REGCEB Pin | N/A |
+| Port B | Primitives Output Register | **✓ Enable** (L=2) ★ 300MHz |
+| Port B | REGCEB Pin | **✓ 체크 (노출)** — engine `1'b1` 결선 (abrupt-stop pair4 sp143 전파; §A.2) |
 
 ### 8.3 Port signature
 
 ```verilog
 fc_weight_bram inst (
     .clka   (clk),
-    .ena    (fcw_ena),                 // ★ ENA + WEA 둘 다 결선 필수 (FC fix #2 적용)
-    .wea    (fcw_ena),                 //   conv2_weight_bram 의 ENA 누락 버그와 동일 원인 예방
+    .ena    (fcw_ena),                 // ENA + WEA 둘 다 결선 (Port A write)
+    .wea    (fcw_wea),                 // 32-bit byte-write (AXI WSTRB 직결)
     .addra  (10-bit),
     .dina   (256-bit),
 
     .clkb   (clk),
     .enb    (fc_fsm 의 fsm_comp_v),
     .addrb  (10-bit),                  // wbase + s_cnt (pair-major)
-    .doutb  (256-bit)                  // {odd col 16ch, even col 16ch}
+    .doutb  (256-bit),                 // {odd col 16ch, even col 16ch}
+    .regceb (1'b1)                     // 출력 reg always-follow (L=2, abrupt-stop sp143 전파)
 );
 ```
 
@@ -511,10 +544,22 @@ mem[addrb]  ─→  core register  ─→  output register  ─→  doutb
 
 ### A.2 REGCEB pin 노출 vs 미노출
 
+> ⚠️ **정정 (2026-06-02):** REGCEB pin 미노출 시 Vivado 는 출력 reg CE 를 **상수 1 이 아니라 ENB 에 tie**
+> 한다 (= ENB-gated). 따라서 **연속 read** 면 무해(마지막 데이터가 다음 ENB=1 read 때 전파)하지만,
+> **마지막 read 직후 ENB=0 으로 끊기는(abrupt-stop)** 경우엔 마지막 데이터가 출력 reg 를 못 빠져나가
+> **누락**된다. 과거 본 표는 "미노출 = 내부 1 tie" 로 잘못 적었고, sim model 도 always-follow 로 모델링해
+> 이 괴리가 iverilog 에서 안 보였다 — c2pool p11 / poolfc sp143 누락 버그의 근본원인.
+>
+> **정책 (정정 2026-06-02): 노출 여부는 소비자 read 패턴에 따라 정반대 — 일괄 노출 금지.**
+> ① **abrupt-stop** (마지막 read 후 ENB=0, 그 데이터를 흘려보내야 함) → **노출 + `1'b1` tie (always-follow) 필수.**
+> ② **streaming + 소비자가 ENB=0 구간 출력 hold 에 의존** (conv1/conv2 의 input BRAM read) → **미노출 (ENB-gated) 필수.**
+> 노출+tie1 로 바꾸면 hold 가 깨져 conv 가 틀린 데이터를 읽는다 (`bram_input`/`bram_c1_to_c2` 가 ②).
+> ⚠️ 과거 "전부 노출"로 적었으나 **틀림** — full pipeline 깨짐(2026-06-02 regression). (output reg ON = read latency +1 → FSM 재정렬 필요.)
+
 | 시나리오 | REGCEB pin | 결선 |
 |---|---|---|
-| **연속 read 중간에 ENA=0 cycle 없음** | 미노출 | Vivado 가 내부적으로 1 로 tie. 마지막 데이터는 다음 read 의 ENA=1 cycle 에 자연스럽게 propagate. (예: `bram_c1_to_c2` — Conv2 의 shift_en 이 PIPELINE_FILL/HOLD/ADV 동안 계속 toggle, 마지막 read 후 충분히 다른 read 시작) |
-| **마지막 read 후 즉시 ENA=0 으로 깔끔하게 OFF** | **노출 필수** | 외부에서 1 상수 결선. 마지막 데이터의 core → output reg propagation 보장 위해. (예: `conv2_weight_bram` — weight_loader 가 575 cycle 후 깔끔하게 ENA OFF) |
+| **streaming + 소비자가 ENB=0 구간 출력 hold 에 의존** (conv1/conv2 의 input BRAM read) | **미노출 필수 (ENB-gated)** | `.regceb` 결선 안 함. 노출+tie1=always-follow 면 hold 깨져 conv 오답 (full 0/40). (예: `bram_input`, `bram_c1_to_c2`) |
+| **마지막 read 직후 즉시 ENB=0 (abrupt-stop)** | **노출 필수** | engine 에서 `1'b1` 상수 결선 → always-follow. 미노출이면 ENB-gated 라 마지막 데이터 누락. (예: `conv2_weight_bram`/`conv1_weight_bram` weight 마지막; **`bram_c2_to_pool`** maxpool p11; **`bram_pool_to_fc`** FC sp143; **`fc_weight_bram`** FC weight pair4 sp143) |
 
 ### A.3 결선 예제
 
@@ -555,12 +600,12 @@ conv2_weight_bram c2w_bmg (
 | BMG | L | 이유 |
 |---|---|---|
 | `bram_c1_to_c2` | 2 | Conv2 fanout uniformity (모든 IC × line_buffer 까지 timing balance). `conv2_timing.md` 참조. |
-| `bram_c2_to_pool` | 1 | maxpool_fsm 의 phase counting 이 L=1 가정 (간단한 1-cycle pipeline). |
-| `bram_pool_to_fc` | 1 | fc_engine.v:20-22 의 pipeline timeline 이 L=1 가정. |
+| `bram_c2_to_pool` | 2 | 300MHz: maxpool_fsm 7-phase (L=2). 출력 reg **REGCEB 노출+tie1** (abrupt-stop p11 전파). |
+| `bram_pool_to_fc` | 2 | 300MHz: fc_engine `CTRL_DELAY=9` (L=2). 출력 reg **REGCEB 노출+tie1** (abrupt-stop sp143 전파). |
 | `conv2_weight_bram` | 2 | weight_loader 의 `latch_valid_dd` (2-cycle 지연) 가 L=2 가정. |
 | `conv1_weight_bram` | 2 | conv1_weight_loader 의 `latch_valid_dd` (2-cycle 지연) 가 L=2 가정. |
-| `bram_input` | 1 | conv1 의 6-cycle pipeline 가정이 BRAM L=1. |
-| `fc_weight_bram` | 1 | fc_engine.v:21 코멘트 — input/weight BRAM 모두 L=1. |
+| `bram_input` | 2 ★ | 300MHz: Artix-7 −1 BRAM 정격 Fmax(388MHz)가 output reg 전제. conv1_fsm OUT_DELAY=L+N+4=10 으로 +1 흡수 (docs/conv1_timing.md). |
+| `fc_weight_bram` | 2 | 300MHz: fc_engine `CTRL_DELAY=9` (L=2, poolfc 와 정렬). 출력 reg **REGCEB 노출+tie1** (abrupt-stop pair4 sp143 전파; 구 fabric reg fcw_doutb_r 제거, conv weight BMG 와 통일). |
 
 ### B.4 L=2 채택 시 추가 고려
 

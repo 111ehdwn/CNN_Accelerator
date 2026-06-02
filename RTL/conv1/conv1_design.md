@@ -10,7 +10,7 @@ Conv1은 LeNet 계열 CNN의 첫 번째 합성곱 레이어를 FPGA에서 가속
 | 출력 | 26×26, 8채널, signed 8-bit |
 | 커널 | 3×3, 패딩 없음 |
 | 활성화 | ReLU |
-| 파이프라인 레이턴시 | 6사이클 |
+| 파이프라인 보상 (OUT_DELAY) | 10사이클 (300MHz: L=2 + adder 4-stage) |
 
 > 패딩이 없으므로 출력 크기 = 28 - 3 + 1 = **26×26**
 
@@ -63,28 +63,30 @@ Round 2 (sel=1): oc4, oc5, oc6, oc7 계산  →  ch4~ch7 출력 BRAM에 기록
 
 ## 4. 파이프라인 단계별 레이턴시
 
+> ★ **300MHz refactor 반영** (cycle-by-cycle 정밀 분석은 `docs/conv1_timing.md`).
+
 ```
 입력 픽셀 (BRAM)
       │
-      ▼  [1사이클] BRAM 읽기 레이턴시
-  line_buffer / window_register  ← 3×3 윈도우 완성
+      ▼  [2사이클] BRAM 읽기 레이턴시 (L=2, Primitives Output Register ★300MHz)
+  line_buffer / window_register  ← 3×3 윈도우 완성 (+1 window latch)
       │
-      ▼  [3사이클] DSP48E1 내부 파이프라인 (AREG→BREG→MREG→PREG)
+      ▼  [4사이클] DSP48E1 (AREG→MREG→PREG) + PE 출력 레지스터
   conv1_pe_cell (mul0, mul1)
-      │  [+1사이클] PE 출력 레지스터
-      ▼
-  conv1_adder_tree               ← 9개 곱 합산 [1사이클]
       │
-      ▼
-  conv1_truncate_relu            ← 시프트+ReLU [1사이클]
+      ▼  [4사이클] conv1_adder_tree (★ 4-stage pipeline, 1 add-level/stage)
+  sum0, sum1
       │
-      ▼  [출력 레지스터 1사이클]
+      ▼  [1사이클] conv1_truncate_relu (시프트+ReLU)
+  tr_out0~3
+      │
+      ▼  [출력 레지스터 1사이클, round0 전용]
   ch_final (ch0~ch3 또는 ch4~ch7)
-
-총 파이프라인 지연 = 6사이클
 ```
 
-FSM은 이 6사이클 딜레이를 고려하여 `pixel_valid`, `out_row`, `out_col`, `out_sel` 신호를 **6단계 시프트 레지스터**로 함께 지연시킵니다.
+**FSM 보상** (`conv1_fsm`): 데이터 정렬을 위해 `pixel_valid`, `out_row`, `out_col`, `out_sel` 를
+**OUT_DELAY = L + N_adder + 4 = 2 + 4 + 4 = 10 단계** 시프트 레지스터로 지연 (+ 엔진 `we_pipe` 3단 = write 까지 13).
+FLUSH 는 **FLUSH_LEN = OUT_DELAY + 2 = 12** 사이클 (마지막 픽셀 완전 drain, off-by-one 수정).
 
 ---
 
@@ -181,11 +183,11 @@ IDLE ──(start)──→ LOAD ──(load_done)──→ RUN1
                                           │
                                      (scan_done=784사이클)
                                           │
-                                        FLUSH1 ──(6사이클)──→ LBRST ──(1사이클)──→ RUN2
+                                        FLUSH1 ──(12사이클)──→ LBRST ──(1사이클)──→ RUN2
                                                                                       │
                                                                                (scan_done)
                                                                                       │
-                                                                                    FLUSH2 ──(6사이클)──→ DONE ──→ IDLE
+                                                                                    FLUSH2 ──(12사이클)──→ DONE ──→ IDLE
 ```
 
 |  상태  | pipe_en | sel | lb_rst | 설명 |
@@ -193,10 +195,10 @@ IDLE ──(start)──→ LOAD ──(load_done)──→ RUN1
 | IDLE   |    0    |  0  |    0   | start 대기 |
 | LOAD   |    0    |  0  |    0   | 가중치 적재 완료 대기 |
 | RUN1   |    1    |  0  |    0   | 28×28 스캔, oc0~3 계산 |
-| FLUSH1 |    1    |  0  |    0   | 마지막 픽셀 파이프라인 드레인 (6사이클) |
+| FLUSH1 |    1    |  0  |    0   | 마지막 픽셀 파이프라인 드레인 (12사이클) |
 | LBRST  |    0    |  1  |    1   | line_buffer/window_register 클리어 (1사이클) |
 | RUN2   |    1    |  1  |    0   | 28×28 재스캔, oc4~7 계산 |
-| FLUSH2 |    1    |  1  |    0   | 마지막 픽셀 파이프라인 드레인 (6사이클) |
+| FLUSH2 |    1    |  1  |    0   | 마지막 픽셀 파이프라인 드레인 (12사이클) |
 | DONE   |    0    |  -  |    0   | done 펄스 1사이클 후 IDLE |
 
 1.IDLE
@@ -214,7 +216,7 @@ scan_done(row=27, col=27)이 되면 FLUSH1으로
 
 4.FLUSH1
 pipe_en=1 유지 — 마지막 픽셀이 파이프라인 끝까지 흘러가게
-6사이클 카운트 후 LBRST로
+FLUSH_LEN(=12)사이클 카운트 후 LBRST로
 row/col은 0으로 리셋
 
 5.LBRST
@@ -229,7 +231,7 @@ pipe_en=1, sel=1
 
 7.FLUSH2 / DONE
 
-FLUSH1과 동일하게 6사이클 드레인
+FLUSH1과 동일하게 12사이클 드레인
 DONE에서 done=1 펄스 1사이클
 ---
 
@@ -259,10 +261,10 @@ sum (24-bit signed)
 |          항목         |      값      |
 |-----------------------|--------------|
 |   1회 스캔 사이클 수   | 784 (28×28)  |
-|    FLUSH 사이클 수     |      6      |
+|    FLUSH 사이클 수     |      12 (300MHz)      |
 |    LBRST 사이클 수     |      1      |
 | 가중치 적재 사이클 수   | ~40 (BRAM 2사이클 레이턴시 포함) |
-| 전체 실행 사이클 (대략) | 40 + 784 + 6 + 1 + 784 + 6 + 1 ≈ **1622사이클** |
+| 전체 실행 사이클 (대략) | 40 + 784 + 12 + 1 + 784 + 12 + 1 ≈ **1634사이클** (300MHz: FLUSH 12) |
 |    유효 출력 픽셀 수    | 26×26 = 676개 × 8채널 |
 
 ---

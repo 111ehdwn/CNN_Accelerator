@@ -18,9 +18,15 @@
 //   상세: docs/ip_spec/block_memory_generator.md
 //////////////////////////////////////////////////////////////////////////////////
 
-`define CONV1_ALL_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_c1c2.hex"
-`define CONV2_ALL_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_c2pool.hex"
-`define WEIGHT_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_weights_simd.hex"
+`ifdef __ICARUS__
+  `define CONV1_ALL_HEX  "data/multi_img/all_c1c2.hex"
+  `define CONV2_ALL_HEX  "data/multi_img/all_c2pool.hex"
+  `define WEIGHT_HEX     "data/weights_simd/conv2_weights_simd.hex"
+`else
+  `define CONV1_ALL_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_c1c2.hex"
+  `define CONV2_ALL_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_c2pool.hex"
+  `define WEIGHT_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_weights_simd.hex"
+`endif
 
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -31,11 +37,12 @@ module tb_conv2_engine_multi;
     parameter N_IMAGES = 100;
 
     //==========================================================================
-    // Clock / reset (180 MHz)
+    // Clock / reset (100 MHz)
     //==========================================================================
+    parameter CLK_PERIOD = 10;
     reg clk = 1'b0;
     reg rst = 1'b1;
-    always #2.78 clk = ~clk;
+    always #(CLK_PERIOD/2) clk = ~clk;
 
     //==========================================================================
     // DUT signals
@@ -44,6 +51,7 @@ module tb_conv2_engine_multi;
 
     // Conv2 weight Port A — TB 가 init_weight task 로 driving (실제 PS 동작 emulation)
     reg          c2w_ena        = 1'b0;
+    reg  [3:0]   c2w_wea        = 4'd0;
     reg  [9:0]   c2w_addra      = 10'd0;
     reg  [31:0]  c2w_dina       = 32'd0;
 
@@ -103,7 +111,8 @@ module tb_conv2_engine_multi;
         .clkb  (clk),
         .enb   (c2pool_enb_b),
         .addrb (c2pool_addr_b),
-        .doutb (c2pool_doutb_b)
+        .doutb (c2pool_doutb_b),
+        .regceb (1'b1)
     );
 
     //==========================================================================
@@ -117,6 +126,7 @@ module tb_conv2_engine_multi;
 
         // Conv2 weight BMG Port A (TB 가 init_weight 로 driving)
         .c2w_ena     (c2w_ena),
+        .c2w_wea     (c2w_wea),
         .c2w_addra   (c2w_addra),
         .c2w_dina    (c2w_dina),
 
@@ -170,11 +180,13 @@ module tb_conv2_engine_multi;
             for (wi = 0; wi < 576; wi = wi + 1) begin
                 @(negedge clk);
                 c2w_ena   = 1'b1;
+                c2w_wea   = 4'hF;
                 c2w_addra = wi[9:0];
                 c2w_dina  = weight_mem[wi];
             end
             @(negedge clk);
             c2w_ena   = 1'b0;
+            c2w_wea   = 4'd0;
             c2w_addra = 10'd0;
             c2w_dina  = 32'd0;
             $display("[TB] @ cycle %0d : init_weight done", cycle_cnt);
@@ -319,6 +331,7 @@ module tb_conv2_engine_multi;
 
         // Init driving signals (defensive)
         c2w_ena       = 1'b0;
+        c2w_wea       = 4'd0;
         c2w_addra     = 10'd0;
         c2w_dina      = 32'd0;
         c1c2_ena_a    = 1'b0;

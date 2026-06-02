@@ -26,8 +26,8 @@
 //     [255:128] : odd  output column weights, 16ch
 //
 //   BRAM read latency:
-//     input BRAM  = 1 cycle
-//     weight BRAM = 1 cycle
+//     poolfc (input) BRAM = 2 cycle (L=2, 300MHz)
+//     weight BRAM         = 2 cycle (L=2, Primitive Output Register + REGCEB tie1)
 //////////////////////////////////////////////////////////////////////////////////
 
 module fc_engine #(
@@ -38,16 +38,17 @@ module fc_engine #(
     input  wire         start,
 
     //==========================================================================
-    // FC weight BRAM Port A
-    // 256-bit x 720, addr = pair*144 + spatial
+    // FC weight BRAM Port A  (PS write via 256-bit AXI BRAM Ctrl)
+    // 256-bit × 1024 (720 used), addr = pair*144 + spatial
     //==========================================================================
     input  wire         fcw_ena,
-    input  wire [9:0]   fcw_addra,
+    input  wire [31:0]  fcw_wea,     // 256-bit byte-write (AXI WSTRB[31:0])
+    input  wire [9:0]   fcw_addra,   // symmetric Port A: 256b × 1024 word addr
     input  wire [255:0] fcw_dina,
 
     //==========================================================================
     // poolfc buffer read port
-    //   128-bit × 512 (2 bank × 256), 1-cycle read latency.
+    //   128-bit × 512 (2 bank × 256), 2-cycle read latency (L=2, bram_pool_to_fc).
     //   addr = {input_bank_sel, s_cnt[7:0]} — bank=0: 0..143, bank=1: 256..399.
     //==========================================================================
     output wire         poolfc_re,
@@ -110,23 +111,32 @@ module fc_engine #(
     assign poolfc_addr = {fsm_input_bank_sel, fsm_s_cnt};
 
     //==========================================================================
-    // 3. Weight BRAM, 256-bit x 720, 1-cycle read latency
+    // 3. Weight BRAM, 256-bit x 720, L=2 read latency
+    //    (Primitive Output Register ON + REGCEB tie1 → always-follow)
     //==========================================================================
     wire [9:0]   fcw_addrb = fsm_wbase + {2'd0, fsm_s_cnt};
     wire [255:0] fcw_doutb;
 
     fc_weight_bram fcw_bmg_inst (
         .clka   (clk),
-        .ena    (fcw_ena),                 // ★ ENA + WEA 둘 다 결선 필수
-        .wea    (fcw_ena),                 //   (conv2_weight_bram 의 ENA 누락 버그와 동일 원인 예방)
+        .ena    (fcw_ena),                 // ENA=fcw_ena
+        .wea    (fcw_wea),                 // WEA=fcw_wea[31:0] byte-write (AXI WSTRB 직결)
         .addra  (fcw_addra),
         .dina   (fcw_dina),
 
         .clkb   (clk),
         .enb    (fsm_comp_v),
         .addrb  (fcw_addrb),
-        .doutb  (fcw_doutb)
+        .doutb  (fcw_doutb),
+        .regceb (1'b1)                     // 출력 reg always-follow (마지막 weight sp143 전파)
     );
+
+    //   weight BRAM 을 poolfc 와 동일하게 L=2 (BMG output primitive register) 로 두어
+    //   weight(fcw_doutb) 와 x(poolfc_dout) 가 둘 다 T+2 에 도착하도록 정렬한다.
+    //   (구: fc_weight_bram L=1 + fabric reg fcw_doutb_r 로 +1 했으나, IP output reg 로
+    //    통일 — conv weight BMG 와 동일 방식. REGCEB=1 로 마지막 weight(pair4 sp143) propagation
+    //    보장. abrupt-stop(comp_v drop) 에서 REGCEB 미노출이면 ENB-gated → 누락; 그래서 tie1.)
+    //   L=2 output register 는 300MHz weight read 타이밍도 닫는다 (clock-to-out ~0.45ns).
 
     // User-defined packing:
     //   MSB side = odd column  16 weights
@@ -138,31 +148,32 @@ module fc_engine #(
     // 4. Valid/control alignment
     //
     // PE 는 공용 core/pe_cell (DSP 3-stage + 출력 reg = 4-cycle latency).
-    // Timeline for an issued spatial word at cycle T (BRAM L=1):
-    //   T+1 : BRAM doutb valid           — PE x/packed_w inputs valid (combinational)
-    //   T+2 : DSP A/B latch              — pe_en @ T+1 = 1 필요
-    //   T+3 : DSP M latch                — pe_en @ T+2 = 1 필요
-    //   T+4 : DSP P latch                — pe_en @ T+3 = 1 필요
-    //   T+5 : PE 출력 reg (mul0/mul1)    — pe_en @ T+4 = 1 필요
-    //   T+6 : adder stage1 reg (e1)      — adder_en @ T+5 = 1 필요
-    //   T+7 : adder stage2 reg (e2)
-    //   T+8 : adder stage3 reg (e3)
-    //   T+9 : adder stage4 reg (sum0/1)  — adder_en @ T+8 = 1 필요
-    //   T+10: accumulator update         — acc_en @ T+9 = 1 필요
+    // Timeline for an issued spatial word at cycle T
+    //   (poolfc L=2 & weight L=2: 둘 다 BMG output primitive register → T+2 도착):
+    //   T+2 : x(poolfc_dout) & weight(fcw_doutb) valid — PE inputs valid (combinational)
+    //   T+3 : DSP A/B latch              — pe_en @ T+2 = 1 필요
+    //   T+4 : DSP M latch                — pe_en @ T+3 = 1 필요
+    //   T+5 : DSP P latch                — pe_en @ T+4 = 1 필요
+    //   T+6 : PE 출력 reg (mul0/mul1)    — pe_en @ T+5 = 1 필요
+    //   T+7 : adder stage1 reg (e1)      — adder_en @ T+6 = 1 필요
+    //   T+8 : adder stage2 reg (e2)
+    //   T+9 : adder stage3 reg (e3)
+    //   T+10: adder stage4 reg (sum0/1)  — adder_en @ T+9 = 1 필요
+    //   T+11: accumulator update         — acc_en @ T+10 = 1 필요
     //
     // comp_pipe[k] @ cycle C = fsm_comp_v @ cycle (C-k-1) (1-cycle 등록 지연부터).
-    // 따라서 (index k = X-(T+1)):
-    //   pe_en    = comp_pipe[0] | comp_pipe[1] | comp_pipe[2]
-    //                          | comp_pipe[3]                    (covers T+1..T+4)
-    //   adder_en = comp_pipe[4] | comp_pipe[5] | comp_pipe[6]
-    //                          | comp_pipe[7]                    (covers T+5..T+8)
-    //   acc_en/clear/last/pair = *_pipe[8]                       (covers T+9)
+    // poolfc 출력 register(L=2)로 데이터가 기존 L=1 대비 +1 늦으므로 모든 tap +1 시프트:
+    //   pe_en    = comp_pipe[1] | comp_pipe[2] | comp_pipe[3]
+    //                          | comp_pipe[4]                    (covers T+2..T+5)
+    //   adder_en = comp_pipe[5] | comp_pipe[6] | comp_pipe[7]
+    //                          | comp_pipe[8]                    (covers T+6..T+9)
+    //   acc_en/clear/last/pair = *_pipe[9]                       (covers T+10)
     //
     // 주의: accumulator 의 logit 캡처는 "acc + sum" 형태로 마지막 spatial 포함.
     // (RTL/fc/fc_accumulator.v 의 last=1 branch 참조; sp(last) 가 acc0_OLD 에
     //  아직 없을 때도 combinational add 로 logit 에 반영.)
     //==========================================================================
-    localparam CTRL_DELAY = 8;
+    localparam CTRL_DELAY = 9;   // poolfc output register(L=2) 반영: 기존 8 +1
 
     reg [CTRL_DELAY:0] comp_pipe;
     reg [CTRL_DELAY:0] first_pipe;
@@ -192,8 +203,8 @@ module fc_engine #(
         end
     end
 
-    wire pe_en    = comp_pipe[0] | comp_pipe[1] | comp_pipe[2] | comp_pipe[3];
-    wire adder_en = comp_pipe[4] | comp_pipe[5] | comp_pipe[6] | comp_pipe[7];
+    wire pe_en    = comp_pipe[1] | comp_pipe[2] | comp_pipe[3] | comp_pipe[4];
+    wire adder_en = comp_pipe[5] | comp_pipe[6] | comp_pipe[7] | comp_pipe[8];
 
     wire       acc_en    = comp_pipe [CTRL_DELAY];
     wire       acc_clear = first_pipe[CTRL_DELAY];
