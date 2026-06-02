@@ -182,7 +182,8 @@ PS 루프 부담: per-image 196-write+polling → **CDMA submit 1회 + img_ready
 - [x] `block_memory_generator.md` §1 표에 `bram_output` 행 추가 + 본 문서 링크.
 - [x] 스크린샷 `docs/ip_spec/bram_output/bram_output-{basic,portA,portB,summary}.png`.
 - [x] **RTL 통합** (`cnn_accelerator.v`): `res_rd_*` **Port B passthrough (PS read)** + result-writer (Port A 내부, `img_done`→`res_wr_ptr`, ENA=WEA) + `bram_output` 인스턴스 (clka=clkb=clk). sim 모델 `bram_output` 을 `bmg_sim_models.v` 에 추가. **회귀 없음**: `tb_cnn_accelerator_multi` 40/40 + `tb_system_axi_multi` 10/10 PASS (2026-06-02).
-- [ ] **bram_output readback 검증**: TB 가 종료 후 `res_rd_*` 로 전수 read → 기대 result 비교 (overlap 중 손실 없음 입증). ← **다음**
+- [x] **bram_output readback 검증**: `tb_cnn_accelerator_multi` 40/40 + `tb_system_axi_multi` 10/10 readback PASS — overlap 중 결과 손실 없음 입증 (2026-06-02).
+- [x] **`result` 경로 제거** (phase 2): cnn `result` 출력 + CSR `result_latch`/STATUS[4:1] 삭제. **STATUS re-pack** `[0]done [1]can_load [15:2]img_cnt`. TB 2종 readback 전환. main.c STATUS decode 정리(`ST_RESULT` 삭제, can_load>>1/img_cnt>>2). 결과수집은 ↓ block design 단계로 deferral.
 - [ ] **block design**: output AXI BRAM Ctrl (32b, `0xC800_0000`, 16KB) Port B 연결 + addr slice (byte→word `bram_addr[13:2]`→`res_rd_addr`). 입력 AXI CDMA (§4.1).
 - [ ] **firmware**: 종료 후 `0xC800_0000` 에서 2500 word 일괄 read → 결과 비교.
 
