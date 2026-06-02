@@ -170,10 +170,20 @@ module tb_conv1_to_fc;
     //   write: maxpool (synchronous)
     //   read : fc_engine (synchronous, L=1)
     //
-    // ★ 핵심: read port 명시 구현 (없으면 poolfc_dout = 0 → fc 출력 0)
+    // ★ 반드시 0 초기화 필요:
+    //   fc_engine COMPUTE 첫 사이클에 poolfc_dout_r 이 X 이면
+    //   accumulator 에 X 가 전파되어 모든 logit = X → argmax 기본값 0 반환.
+    //   single-image TB 는 `reg [127:0] poolfc_dout = 128'd0` 으로 초기화되어
+    //   동일 문제가 없었음.
     //==========================================================================
     reg [127:0] poolfc_mem   [0:511];
-    reg [127:0] poolfc_dout_r;
+    reg [127:0] poolfc_dout_r = 128'd0;  // ★ 0 초기화 필수
+
+    integer pi;
+    initial begin
+        for (pi = 0; pi < 512; pi = pi + 1)
+            poolfc_mem[pi] = 128'd0;
+    end
 
     // write port (maxpool → poolfc)
     always @(posedge clk) begin
@@ -484,9 +494,12 @@ module tb_conv1_to_fc;
         @(negedge clk);
 
         for (i_cmp = 0; i_cmp < N_IMAGES; i_cmp = i_cmp + 1) begin
+            // ★ class_valid 와 같은 posedge 에서 class_idx 캡처
+            //   fc_argmax: class_idx 와 done(=class_valid) 이 동일 NBA cycle 에 확정.
+            //   extra @clk 를 넣으면 다음 사이클에서 읽는데, class_idx 는 reg 라 유지됨.
+            //   single-image TB 패턴 동일하게 맞춤.
             @(posedge fc_class_valid);
-            @(posedge clk);  // class_idx 안정 대기 1 cycle
-            got_class    = fc_class_idx;
+            got_class    = fc_class_idx;  // ★ 동일 사이클에서 즉시 캡처
             cycle_at_end = cycle_cnt;
 
             if (got_class == expected_class[i_cmp]) begin
