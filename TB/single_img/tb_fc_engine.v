@@ -79,9 +79,9 @@ module tb_fc_engine;
 
     // Weight BMG Port A (TB 가 PS-style sequential write)
     reg          fcw_ena      = 1'b0;
-    reg  [31:0]  fcw_wea      = 32'd0;
+    reg  [63:0]  fcw_wea      = 64'd0;
     reg  [9:0]   fcw_addra    = 10'd0;
-    reg  [255:0] fcw_dina     = 256'd0;
+    reg  [511:0] fcw_dina     = 512'd0;
 
     // poolfc (TB-local behavioral mem)
     wire         poolfc_re;
@@ -156,57 +156,42 @@ module tb_fc_engine;
     // Weight loader task (PS-style sequential write, 720 entries)
     //
     //   fc_weights_simd.hex 포맷:
-    //     11520 line × 32-bit SIMD-packed (W1*2^17 + W0)
+    //     11520 line × 32-bit SIMD-packed A (A = W1*2^17 + W0)
     //     line index = pair*144*16 + s*16 + c
     //
-    //   SIMD unpack (DSP48E1 packing 의 inverse):
-    //     W0 (8-bit signed) = packed[7:0]
-    //     W1 (8-bit signed) = packed[24:17] + (packed[16] ? 1 : 0)   ← carry correction
-    //
-    //   BMG 256-bit dina:
-    //     dina[127:0]   = {w0_ch15, ..., w0_ch0}    (even OC, 16ch packed)
-    //     dina[255:128] = {w1_ch15, ..., w1_ch0}    (odd  OC, 16ch packed)
+    //   ★ SIMD-direct: 변환 없이 16ch × 32b A 를 512b word 에 그대로 적재.
+    //     dina[c*32 +: 32] = weight_simd_mem[pair*144*16 + s*16 + c]   (c=0..15)
+    //     (fc_pe_array 가 lane 별 [ch*32 +:25] 를 pe_cell.packed_w 로 직결.)
     //==========================================================================
     reg [31:0] weight_simd_mem [0:11519];
 
     task load_weights;
         integer pair, s, c, line_idx;
-        reg signed [7:0]  w0, w1;
-        reg signed [16:0] w0_packed_17;
-        reg signed [7:0]  w1_packed_8;
-        reg [127:0]       w_even_concat, w_odd_concat;
-        reg [255:0]       word;
+        reg [511:0] word;
         begin
             $readmemh(`FCW_HEX, weight_simd_mem);
             $display("[TB] %s loaded (%0d entries)", `FCW_HEX, 11520);
 
             for (pair = 0; pair < 5; pair = pair + 1) begin
                 for (s = 0; s < 144; s = s + 1) begin
-                    w_even_concat = 128'd0;
-                    w_odd_concat  = 128'd0;
+                    word = 512'd0;
                     for (c = 0; c < 16; c = c + 1) begin
-                        line_idx     = pair*144*16 + s*16 + c;
-                        w0_packed_17 = $signed(weight_simd_mem[line_idx][16:0]);
-                        w1_packed_8  = $signed(weight_simd_mem[line_idx][24:17]);
-                        w0 = w0_packed_17[7:0];
-                        w1 = w1_packed_8 + (w0_packed_17[16] ? 8'sd1 : 8'sd0);
-                        w_even_concat[c*8 +: 8] = w0;
-                        w_odd_concat [c*8 +: 8] = w1;
+                        line_idx = pair*144*16 + s*16 + c;
+                        word[c*32 +: 32] = weight_simd_mem[line_idx];   // SIMD-A 그대로
                     end
-                    word = {w_odd_concat, w_even_concat};
                     @(negedge clk);
                     fcw_ena   = 1'b1;
-                    fcw_wea   = 32'hFFFF_FFFF;       // 256-bit full-word write
+                    fcw_wea   = 64'hFFFF_FFFF_FFFF_FFFF;   // 512-bit full-word write
                     fcw_addra = pair*144 + s;
                     fcw_dina  = word;
                 end
             end
             @(negedge clk);
             fcw_ena   = 1'b0;
-            fcw_wea   = 32'd0;
+            fcw_wea   = 64'd0;
             fcw_addra = 10'd0;
-            fcw_dina  = 256'd0;
-            $display("[TB] Weight BRAM write done (720 entries)");
+            fcw_dina  = 512'd0;
+            $display("[TB] Weight BRAM write done (720 entries, SIMD-direct)");
         end
     endtask
 
@@ -395,31 +380,31 @@ endmodule
 //   ★ Vivado 프로젝트에 실제 fc_weight_bram BMG IP 가 있으면 이 module 을
 //     주석 처리하거나 다른 파일로 분리하세요 (duplicate 정의 충돌 방지).
 //==============================================================================
-module fc_weight_bram (   // SYMMETRIC: Port A 256b write (byte-write, ×1024) / Port B 256b read (720 used)
+module fc_weight_bram (   // SYMMETRIC: Port A 512b write (byte-write, ×1024) / Port B 512b read (720 used)
     input  wire         clka,
     input  wire         ena,
-    input  wire [31:0]  wea,                // 256-bit byte-write (AXI WSTRB 직결)
+    input  wire [63:0]  wea,                // 512-bit byte-write (AXI WSTRB 직결)
     input  wire [9:0]   addra,
-    input  wire [255:0] dina,
+    input  wire [511:0] dina,
 
     input  wire         clkb,
     input  wire         enb,
     input  wire [9:0]   addrb,
-    output reg  [255:0] doutb,
+    output reg  [511:0] doutb,
     input  wire         regceb              // 출력 reg CE — engine 이 1'b1 결선 (always-follow)
 );
-    reg [255:0] mem [0:1023];
-    reg [255:0] doutb_i;
+    reg [511:0] mem [0:1023];
+    reg [511:0] doutb_i;
 
     integer mi, b;
     initial begin
-        for (mi = 0; mi < 1024; mi = mi + 1) mem[mi] = 256'd0;
-        doutb_i = 256'd0; doutb = 256'd0;
+        for (mi = 0; mi < 1024; mi = mi + 1) mem[mi] = 512'd0;
+        doutb_i = 512'd0; doutb = 512'd0;
     end
 
     always @(posedge clka) begin
         if (ena)
-            for (b = 0; b < 32; b = b + 1)
+            for (b = 0; b < 64; b = b + 1)
                 if (wea[b]) mem[addra][b*8 +: 8] <= dina[b*8 +: 8];
     end
 

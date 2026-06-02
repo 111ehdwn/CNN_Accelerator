@@ -90,8 +90,9 @@ bram_output res_bmg (
 - **write (8-bit)**: `addra = res_wr_ptr` = 처리 완료 이미지 index (0..9999). `dina = {4'b0, result}`.
 - **read (32-bit)**: word k = image `4k..4k+3` 의 결과. **little-endian** (BMG asymmetric 기본):
   - `doutb[7:0]` = img 4k, `[15:8]` = 4k+1, `[23:16]` = 4k+2, `[31:24]` = 4k+3.
-- AXI BRAM Ctrl byte addr → BMG word addr = `byte_addr >> 2`. Range 16KB → byte addr 14-bit,
-  word addr `[13:2]` (12-bit). PS 는 word 0..2499 (10000 결과) read.
+- AXI BRAM Ctrl byte addr → BMG word addr = `byte_addr >> 2`. **실 BD(`result_bram_axi`): Range 32K
+  → byte addr 15-bit, xlslice `[13:2]`→`res_rd_addr[11:0]` (Din=15)**. PS 는 word 0..2499 (10000 결과) read.
+  (16K 로 잡으면 Din=14, slice 인덱스 동일.)
 
 ---
 
@@ -184,8 +185,9 @@ PS 루프 부담: per-image 196-write+polling → **CDMA submit 1회 + img_ready
 - [x] **RTL 통합** (`cnn_accelerator.v`): `res_rd_*` **Port B passthrough (PS read)** + result-writer (Port A 내부, `img_done`→`res_wr_ptr`, ENA=WEA) + `bram_output` 인스턴스 (clka=clkb=clk). sim 모델 `bram_output` 을 `bmg_sim_models.v` 에 추가. **회귀 없음**: `tb_cnn_accelerator_multi` 40/40 + `tb_system_axi_multi` 10/10 PASS (2026-06-02).
 - [x] **bram_output readback 검증**: `tb_cnn_accelerator_multi` 40/40 + `tb_system_axi_multi` 10/10 readback PASS — overlap 중 결과 손실 없음 입증 (2026-06-02).
 - [x] **`result` 경로 제거** (phase 2): cnn `result` 출력 + CSR `result_latch`/STATUS[4:1] 삭제. **STATUS re-pack** `[0]done [1]can_load [15:2]img_cnt`. TB 2종 readback 전환. main.c STATUS decode 정리(`ST_RESULT` 삭제, can_load>>1/img_cnt>>2). 결과수집은 ↓ block design 단계로 deferral.
-- [ ] **block design**: output AXI BRAM Ctrl (32b, `0xC800_0000`, 16KB) Port B 연결 + addr slice (byte→word `bram_addr[13:2]`→`res_rd_addr`). 입력 AXI CDMA (§4.1).
-- [ ] **firmware**: 종료 후 `0xC800_0000` 에서 2500 word 일괄 read → 결과 비교.
+- [x] **block design (출력)**: `result_bram_axi` (AXI4 32b, `0xC800_0000`, **32K**) → cnn `res_rd_*` Port B, **xlslice Din=15 `[13:2]`→`res_rd_addr[11:0]`** (2026-06-02).
+- [x] **firmware (출력)**: `main.c` 가 루프 후 `OUTPUT_BASE(0xC800_0000)` 일괄 read → `test_labels` 비교 (class match). word=4결과, byte k low-4bit=img(4w+k). uncached MMIO.
+- [ ] **입력 AXI CDMA** (§4.1) — 미적용 (input 은 아직 196 Xil_Out32/img). latency 큰 부분.
 
 ## 8. 참고 스크린샷 (`docs/ip_spec/bram_output/`)
 

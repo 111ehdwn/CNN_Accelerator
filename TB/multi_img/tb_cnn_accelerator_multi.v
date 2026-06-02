@@ -81,9 +81,9 @@ module tb_cnn_accelerator_multi;
     reg  [31:0] c2w_dina  = 32'd0;
 
     reg          fcw_ena   = 1'b0;
-    reg  [31:0]  fcw_wea   = 32'd0;        // 256-bit byte-write (AXI WSTRB)
+    reg  [63:0]  fcw_wea   = 64'd0;        // 512-bit byte-write (AXI WSTRB)
     reg  [9:0]   fcw_addra = 10'd0;
-    reg  [255:0] fcw_dina  = 256'd0;
+    reg  [511:0] fcw_dina  = 512'd0;
 
     //==========================================================================
     // DUT
@@ -163,35 +163,25 @@ module tb_cnn_accelerator_multi;
 
     // FC weight SIMD unpack → asymmetric Port A 32b write (256b word 당 8 × 32b, LSB-first)
     task load_fcw;
-        integer pair, s, c, k, line_idx;
-        reg signed [7:0]  w0, w1;
-        reg signed [16:0] w0_packed_17;
-        reg signed [7:0]  w1_packed_8;
-        reg [127:0]       w_even_concat, w_odd_concat;
-        reg [255:0]       word;
+        integer pair, s, c, line_idx;
+        reg [511:0] word;
         begin
+            // SIMD-direct: 16ch × 32b A (gen 그대로) 를 512b word 로 묶어 write (변환 없음).
             for (pair = 0; pair < 5; pair = pair + 1) begin
                 for (s = 0; s < 144; s = s + 1) begin
-                    w_even_concat = 128'd0;
-                    w_odd_concat  = 128'd0;
+                    word = 512'd0;
                     for (c = 0; c < 16; c = c + 1) begin
-                        line_idx     = pair*144*16 + s*16 + c;
-                        w0_packed_17 = $signed(fc_weight_simd[line_idx][16:0]);
-                        w1_packed_8  = $signed(fc_weight_simd[line_idx][24:17]);
-                        w0 = w0_packed_17[7:0];
-                        w1 = w1_packed_8 + (w0_packed_17[16] ? 8'sd1 : 8'sd0);
-                        w_even_concat[c*8 +: 8] = w0;
-                        w_odd_concat [c*8 +: 8] = w1;
+                        line_idx = pair*144*16 + s*16 + c;
+                        word[c*32 +: 32] = fc_weight_simd[line_idx];
                     end
-                    word = {w_odd_concat, w_even_concat};
-                    // 256b full-word write : addr = pair*144 + s
+                    // 512b full-word write : addr = pair*144 + s
                     @(negedge clk);
-                    fcw_ena   = 1'b1; fcw_wea = 32'hFFFF_FFFF;
+                    fcw_ena   = 1'b1; fcw_wea = 64'hFFFF_FFFF_FFFF_FFFF;
                     fcw_addra = pair*144 + s;
                     fcw_dina  = word;
                 end
             end
-            @(negedge clk); fcw_ena = 1'b0; fcw_wea = 32'd0; fcw_addra = 10'd0; fcw_dina = 256'd0;
+            @(negedge clk); fcw_ena = 1'b0; fcw_wea = 64'd0; fcw_addra = 10'd0; fcw_dina = 512'd0;
         end
     endtask
 

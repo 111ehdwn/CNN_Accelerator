@@ -19,7 +19,7 @@ IP 재생성 / 새 팀원 onboarding / 인터페이스 충돌 디버깅 시 참�
 | **`bram_input`** | **32 / 8** (asymmetric) | **512 / 2048** | **2** ★ | ✗ (1-bit wea) | **✓ Enable** ★ | 미노출 (내부 tie 1) | PS → Conv1 input image (ping-pong, 2 bank × 1024 byte). Port A = AXI burst 32-bit. Port B = Conv1 byte read. ★ 300MHz: L=1→L=2 (§6.2). |
 | **`conv1_weight_bram`** | 32 / 32 | 64 / 64 | 2 | ✗ (1-bit wea) | ✓ Enable | ✓ 노출 (engine 에서 상수 1 결선) | PS → Conv1 weight |
 | **`bram_pool_to_fc`** | 128 / 128 | 512 / 512 | **2** ★ | ✗ (1-bit wea) | **✓ Enable** | **✓ 노출 (engine 1 결선)** ★ | Maxpool → FC (ping-pong, 2 bank × 144 + padding). 300MHz 위해 L=1→L=2 + 출력 reg REGCEB 노출 (abrupt-stop sp143, §4.4) |
-| **`fc_weight_bram`** | 256 / 256 | 1024 / 1024 | **2** ★ | **✓ (32-bit wea, byte size 8)** | **✓ Enable** | **✓ 노출 (engine 1 결선)** ★ | PS → FC weight (720 used). Port A=256b 라 **256-bit AXI BRAM Ctrl + 32→256 datawidth converter** 필요 (firmware 5760×32b write, §8.4). `RTL/fc/fc_engine.v` 에서 instantiate. 300MHz: L=2 + REGCEB 노출 (abrupt-stop sp143). |
+| **`fc_weight_bram`** | **512 / 512** | 1024 / 1024 | **2** ★ | **✓ (64-bit wea, byte size 8)** | **✓ Enable** | **✓ 노출 (engine 1 결선)** ★ | PS → FC weight (720 used). **1 word = 16ch × 32b SIMD-A (A=W1·2¹⁷+W0)**. Port A=512b 라 **512-bit AXI BRAM Ctrl + 32→512 datawidth converter** 필요. firmware 는 **11520×32b SIMD 를 변환 없이 그대로 direct write**. `RTL/fc/fc_engine.v`. 300MHz: L=2 + REGCEB 노출. (구 256b {odd16,even16}+PS변환 → 512b SIMD-direct 로 리팩토링 2026-06-02) |
 | **`bram_output`** | 8 / 32 (asymmetric) | 16384 / 4096 | 1 | ✗ | ✗ (L=1) | 미노출 | **PL result → PS** (per-image read 제거). `img_done` 마다 1 byte 누적, PS 가 끝에 32-bit burst read. 전용 AXI BRAM Ctrl + 입력 AXI CDMA. **independent-clock** (clka/clkb tie `clk`→common, overclock 시 분리). 설계 `output_result_bram.md`, 스샷 `bram_output/` |
 
 **공통 설정 (모든 BMG)**:
@@ -474,8 +474,10 @@ conv1_weight_bram c1w_bmg_inst (
 
 ### 8.1 용도
 
-Pre-packed FC SIMD weight (720 entry × 256-bit, 256 = 2×128 = 2 output column × 16 input channel × 8b) 를 PS 측에서 write,
-`fc_fsm` 의 `fcw_addrb = wbase + s_cnt` (pair-major) 으로 read.
+Pre-packed FC SIMD weight (720 entry × 512-bit = 16 input channel × 32b SIMD-A; A=W1·2¹⁷+W0) 를
+PS 가 **변환 없이 그대로** write (gen 산출 `fc_weights_simd` 11520×32b → 16 A/word).
+`fc_fsm` 의 `fcw_addrb = wbase + s_cnt` (pair-major) 으로 read → `fc_pe_array` 가 lane 별
+`[ch*32 +: 25]` 를 `pe_cell.packed_w` 로 직결 (conv1/conv2 와 동일 SIMD-direct).
 
 ### 8.2 Vivado 설정
 
@@ -483,12 +485,12 @@ Pre-packed FC SIMD weight (720 entry × 256-bit, 256 = 2×128 = 2 output column 
 |---|---|---|
 | Basic | Memory Type | Simple Dual Port RAM |
 | Basic | Common Clock | ✓ |
-| Basic | Byte Write Enable | ✗ |
-| Port A | Port A Width | **256** |
+| Basic | Byte Write Enable | **✓ (byte size 8 → wea 64-bit)** |
+| Port A | Port A Width | **512** |
 | Port A | Port A Depth | **1024** (720 used, 1024 power-of-2) |
 | Port A | Operating Mode | No Change |
 | Port A | Enable Port Type | Use ENA Pin |
-| Port B | Port B Width | 256 |
+| Port B | Port B Width | 512 |
 | Port B | Port B Depth | 1024 |
 | Port B | Operating Mode | Read First |
 | Port B | Enable Port Type | Use ENB Pin |
@@ -501,14 +503,14 @@ Pre-packed FC SIMD weight (720 entry × 256-bit, 256 = 2×128 = 2 output column 
 fc_weight_bram inst (
     .clka   (clk),
     .ena    (fcw_ena),                 // ENA + WEA 둘 다 결선 (Port A write)
-    .wea    (fcw_wea),                 // 32-bit byte-write (AXI WSTRB 직결)
+    .wea    (fcw_wea),                 // 64-bit byte-write (AXI WSTRB 직결)
     .addra  (10-bit),
-    .dina   (256-bit),
+    .dina   (512-bit),                 // 16ch × 32b SIMD-A (gen 그대로)
 
     .clkb   (clk),
     .enb    (fc_fsm 의 fsm_comp_v),
     .addrb  (10-bit),                  // wbase + s_cnt (pair-major)
-    .doutb  (256-bit),                 // {odd col 16ch, even col 16ch}
+    .doutb  (512-bit),                 // 16ch × 32b SIMD-A → fc_pe_array 가 [ch*32+:25] 직결
     .regceb (1'b1)                     // 출력 reg always-follow (L=2, abrupt-stop sp143 전파)
 );
 ```
