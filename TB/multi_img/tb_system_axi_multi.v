@@ -66,10 +66,10 @@ module tb_system_axi_multi;
     //==========================================================================
     // PS-write BMG Port A
     //==========================================================================
-    reg         in_ena=0, in_wea=0;   reg [8:0]  in_addra=0;   reg [31:0]  in_dina=0;
+    reg         in_ena=0;   reg [3:0] in_wea=0;   reg [8:0]  in_addra=0;   reg [31:0]  in_dina=0;
     reg         c1w_ena=0;   reg [5:0]  c1w_addra=0;   reg [31:0]  c1w_dina=0;
     reg         c2w_ena=0;            reg [9:0]  c2w_addra=0;  reg [31:0]  c2w_dina=0;
-    reg         fcw_ena=0;            reg [12:0] fcw_addra=0;  reg [31:0]  fcw_dina=0;
+    reg         fcw_ena=0;            reg [9:0]  fcw_addra=0;  reg [255:0] fcw_dina=0;
 
     //==========================================================================
     // DUTs : CSR + cnn_accelerator
@@ -91,9 +91,11 @@ module tb_system_axi_multi;
         .enable(enable), .start(start), .img_ready(img_ready),
         .result(result), .img_done(img_done), .input_consumed(input_consumed),
         .in_ena(in_ena), .in_wea(in_wea), .in_addra(in_addra), .in_dina(in_dina),
-        .c1w_ena(c1w_ena), .c1w_addra(c1w_addra), .c1w_dina(c1w_dina),
-        .c2w_ena(c2w_ena), .c2w_addra(c2w_addra), .c2w_dina(c2w_dina),
-        .fcw_ena(fcw_ena), .fcw_addra(fcw_addra), .fcw_dina(fcw_dina)
+        // weight BRAM 은 ENA+WEA 둘 다 필요 (실 BD 의 AXI BRAM Ctrl WSTRB). full-word write 라
+        // wea = {4{ena}} 로 emul (미연결 시 wea=X → weight 가 X 로 적재되어 result=X 버그).
+        .c1w_ena(c1w_ena), .c1w_wea({4{c1w_ena}}), .c1w_addra(c1w_addra), .c1w_dina(c1w_dina),
+        .c2w_ena(c2w_ena), .c2w_wea({4{c2w_ena}}), .c2w_addra(c2w_addra), .c2w_dina(c2w_dina),
+        .fcw_ena(fcw_ena), .fcw_wea({32{fcw_ena}}), .fcw_addra(fcw_addra), .fcw_dina(fcw_dina)
     );
 
     //==========================================================================
@@ -119,10 +121,12 @@ module tb_system_axi_multi;
             AWADDR = addr; AWVALID = 1'b1;
             WDATA  = data; WVALID  = 1'b1; WSTRB = 4'hF;
             BREADY = 1'b1;
-            @(posedge ACLK);            // Waddr: AW&&W handshake → bvalid, register write
-            @(negedge ACLK);
-            AWVALID = 1'b0; WVALID = 1'b0;
-            @(posedge ACLK);
+            // AXI-compliant: VALID 를 BVALID(write 응답) 볼 때까지 유지.
+            //   robust slave handshake (AWVALID·WVALID 둘 다 떠야 awready/wready) 는 transfer
+            //   가 1 cycle 뒤라, 기존처럼 1-posedge 후 deassert 하면 write 를 놓친다.
+            while (!BVALID) @(negedge ACLK);
+            AWVALID = 1'b0; WVALID = 1'b0;   // 응답 도착 = AW/W accepted → deassert
+            @(negedge ACLK);                  // BREADY&&BVALID 로 B 응답 소비
             BREADY = 1'b0;
         end
     endtask
@@ -175,9 +179,7 @@ module tb_system_axi_multi;
                 we[c*8 +: 8] = w0; wo[c*8 +: 8] = w1;
             end
             word = {wo, we};
-            for (k=0; k<8; k=k+1) begin   // 256b → 8 × 32b (LSB-first)
-                @(negedge ACLK); fcw_ena=1; fcw_addra=(pair*144+s)*8+k; fcw_dina=word[k*32 +: 32];
-            end
+            @(negedge ACLK); fcw_ena=1; fcw_addra=pair*144+s; fcw_dina=word;   // 256b full-word
           end
         @(negedge ACLK); fcw_ena=0;
     end endtask
@@ -185,7 +187,7 @@ module tb_system_axi_multi;
     task write_input; input integer img; integer k; reg bank; begin
         bank = img[0];
         for (k=0; k<196; k=k+1) begin
-            @(negedge ACLK); in_ena=1; in_wea=1; in_addra={bank,k[7:0]};
+            @(negedge ACLK); in_ena=1; in_wea=4'hF; in_addra={bank,k[7:0]};
             in_dina = {input_data[img*784+k*4+3], input_data[img*784+k*4+2],
                        input_data[img*784+k*4+1], input_data[img*784+k*4+0]};
         end

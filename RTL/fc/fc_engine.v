@@ -38,13 +38,13 @@ module fc_engine #(
     input  wire         start,
 
     //==========================================================================
-    // FC weight BRAM Port A
-    // 256-bit x 720, addr = pair*144 + spatial
+    // FC weight BRAM Port A  (PS write via 256-bit AXI BRAM Ctrl)
+    // 256-bit × 1024 (720 used), addr = pair*144 + spatial
     //==========================================================================
     input  wire         fcw_ena,
-    input  wire [3:0]   fcw_wea,     // byte-write (AXI WSTRB[3:0])
-    input  wire [12:0]  fcw_addra,   // asymmetric Port A: 32b × 5760 (720×8)
-    input  wire [31:0]  fcw_dina,
+    input  wire [31:0]  fcw_wea,     // 256-bit byte-write (AXI WSTRB[31:0])
+    input  wire [9:0]   fcw_addra,   // symmetric Port A: 256b × 1024 word addr
+    input  wire [255:0] fcw_dina,
 
     //==========================================================================
     // poolfc buffer read port
@@ -119,7 +119,7 @@ module fc_engine #(
     fc_weight_bram fcw_bmg_inst (
         .clka   (clk),
         .ena    (fcw_ena),                 // ENA=fcw_ena
-        .wea    (fcw_wea),                 // WEA=fcw_wea[3:0] byte-write (AXI WSTRB 직결)
+        .wea    (fcw_wea),                 // WEA=fcw_wea[31:0] byte-write (AXI WSTRB 직결)
         .addra  (fcw_addra),
         .dina   (fcw_dina),
 

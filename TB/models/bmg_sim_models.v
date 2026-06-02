@@ -40,6 +40,13 @@ module bram_input (
     reg [7:0] mem [0:2047];
     reg signed [7:0] doutb_i;               // 1st stage: BRAM core read register (ENB gated)
 
+    // 실제 BMG sim 기본 초기값(0) 모사 — 미기록 셀/출력reg 가 X 로 남지 않게 (bram_c1_to_c2 와 동일).
+    integer mi_init;
+    initial begin
+        for (mi_init = 0; mi_init < 2048; mi_init = mi_init + 1) mem[mi_init] = 8'd0;
+        doutb_i = 8'd0; doutb = 8'd0;
+    end
+
     always @(posedge clka) begin
         if (ena) begin
             if (wea[0]) mem[{addra, 2'b00} + 11'd0] <= dina[7:0];
@@ -187,6 +194,13 @@ module bram_c2_to_pool (
     reg [127:0] mem [0:2047];
     reg signed [127:0] doutb_i;                // 1st stage: BRAM core read register (ENB gated)
 
+    // 실제 BMG sim 기본 초기값(0) 모사 — 미기록 셀/출력reg 가 X 로 남지 않게 (bram_c1_to_c2 와 동일).
+    integer mi_init;
+    initial begin
+        for (mi_init = 0; mi_init < 2048; mi_init = mi_init + 1) mem[mi_init] = 128'd0;
+        doutb_i = 128'd0; doutb = 128'd0;
+    end
+
     always @(posedge clka) if (ena && wea) mem[addra] <= dina;
 
     // L=2: core read register (ENB) + output primitive register (REGCEB tied 1)
@@ -199,34 +213,29 @@ endmodule
 
 // ===========================================================================
 // fc_weight_bram : SDP 256b × 1024, L=1 (no regceb pin)
+//   Symmetric: Port A 256b write (byte-write, ×1024) / Port B 256b read (720 used)
 //   (tb_fc_engine.v 의 behavioral 정의와 동일 거동)
 // ===========================================================================
-module fc_weight_bram (   // ASYMMETRIC: Port A 32b write (×5760) / Port B 256b read (×720)
+module fc_weight_bram (
     input  wire         clka,
     input  wire         ena,
-    input  wire [3:0]   wea,                // byte-write (AXI WSTRB 직결)
-    input  wire [12:0]  addra,
-    input  wire [31:0]  dina,
+    input  wire [31:0]  wea,                // 256-bit byte-write (AXI WSTRB 직결)
+    input  wire [9:0]   addra,
+    input  wire [255:0] dina,
 
     input  wire         clkb,
     input  wire         enb,
     input  wire [9:0]   addrb,
     output reg  [255:0] doutb
 );
-    reg [31:0] mem [0:5759];   // 5760 = 720 × (256/32)
-    integer k;
+    reg [255:0] mem [0:1023];
+    integer b;
 
-    always @(posedge clka) if (ena) begin
-        if (wea[0]) mem[addra][ 7: 0] <= dina[ 7: 0];
-        if (wea[1]) mem[addra][15: 8] <= dina[15: 8];
-        if (wea[2]) mem[addra][23:16] <= dina[23:16];
-        if (wea[3]) mem[addra][31:24] <= dina[31:24];
-    end
+    always @(posedge clka) if (ena)
+        for (b = 0; b < 32; b = b + 1)
+            if (wea[b]) mem[addra][b*8 +: 8] <= dina[b*8 +: 8];
 
-    // 256b read = 8 × 32b, LSB-first (narrow port 낮은 주소 ↔ wide port LSB)
-    always @(posedge clkb) if (enb)
-        for (k = 0; k < 8; k = k + 1)
-            doutb[k*32 +: 32] <= mem[addrb*8 + k];
+    always @(posedge clkb) if (enb) doutb <= mem[addrb];
 endmodule
 
 
@@ -248,6 +257,13 @@ module bram_pool_to_fc (
 );
     reg [127:0] mem [0:511];
     reg [127:0] doutb_i;                       // 1st stage: BRAM core read register (ENB gated)
+
+    // 실제 BMG sim 기본 초기값(0) 모사 — 미기록 셀/출력reg 가 X 로 남지 않게 (bram_c1_to_c2 와 동일).
+    integer mi_init;
+    initial begin
+        for (mi_init = 0; mi_init < 512; mi_init = mi_init + 1) mem[mi_init] = 128'd0;
+        doutb_i = 128'd0; doutb = 128'd0;
+    end
 
     always @(posedge clka) if (ena && wea) mem[addra] <= dina;
 

@@ -17,7 +17,7 @@ IP 재생성 / 새 팀원 onboarding / 인터페이스 충돌 디버깅 시 참�
 | **`bram_input`** | **32 / 8** (asymmetric) | **512 / 2048** | **2** ★ | ✗ (1-bit wea) | **✓ Enable** ★ | 미노출 (내부 tie 1) | PS → Conv1 input image (ping-pong, 2 bank × 1024 byte). Port A = AXI burst 32-bit. Port B = Conv1 byte read. ★ 300MHz: L=1→L=2 (§6.2). |
 | **`conv1_weight_bram`** | 32 / 32 | 64 / 64 | 2 | ✗ (1-bit wea) | ✓ Enable | ✓ 노출 (engine 에서 상수 1 결선) | PS → Conv1 weight |
 | **`bram_pool_to_fc`** | 128 / 128 | 512 / 512 | 1 | ✗ (1-bit wea) | ✗ Disable | N/A | Maxpool → FC (ping-pong, 2 bank × 144 + padding) |
-| **`fc_weight_bram`** (사용 중, IP 캡처 대기) | 256 / 256 | 1024 / 1024 | 1 | ✗ (1-bit wea) | ✗ Disable | N/A | PS → FC weight. RTL/fc/fc_engine.v:105 에서 instantiate. IP 캡처 추가 시 spec 확정. |
+| **`fc_weight_bram`** | 256 / 256 | 1024 / 1024 | 1 | **✓ (32-bit wea, byte size 8)** | ✗ Disable | N/A | PS → FC weight (720 used). Port A=256b 라 **256-bit AXI BRAM Ctrl + 32→256 datawidth converter** 필요 (firmware 5760×32b write, §8.4). `RTL/fc/fc_engine.v` 에서 instantiate. |
 
 **공통 설정 (모든 BMG)**:
 - Interface Type: **Native**

@@ -143,9 +143,9 @@ module tb_conv1_conv2_maxpool_fc_multi;
 
     // fc_weight_bram (Port A write, fc_engine 내부에서 read)
     reg          fcw_ena   = 1'b0;
-    reg  [3:0]   fcw_wea   = 4'd0;
-    reg  [12:0]  fcw_addra = 13'd0;
-    reg  [31:0]  fcw_dina  = 32'd0;
+    reg  [31:0]  fcw_wea   = 32'd0;
+    reg  [9:0]   fcw_addra = 10'd0;
+    reg  [255:0] fcw_dina  = 256'd0;
 
     //==========================================================================
     // Counters (handshake-tracked, backpressure + 통계용)
@@ -409,16 +409,14 @@ module tb_conv1_conv2_maxpool_fc_multi;
                         w_odd_concat [c*8 +: 8] = w1;
                     end
                     word = {w_odd_concat, w_even_concat};
-                    for (k = 0; k < 8; k = k + 1) begin
-                        @(negedge clk);
-                        fcw_ena   = 1'b1;
-                        fcw_wea   = 4'hF;
-                        fcw_addra = (pair*144 + s)*8 + k;
-                        fcw_dina  = word[k*32 +: 32];
-                    end
+                    @(negedge clk);
+                    fcw_ena   = 1'b1;
+                    fcw_wea   = 32'hFFFF_FFFF;       // 256-bit full-word write
+                    fcw_addra = pair*144 + s;
+                    fcw_dina  = word;
                 end
             end
-            @(negedge clk); fcw_ena = 1'b0; fcw_wea = 4'd0; fcw_addra = 13'd0; fcw_dina = 32'd0;
+            @(negedge clk); fcw_ena = 1'b0; fcw_wea = 32'd0; fcw_addra = 10'd0; fcw_dina = 256'd0;
             $display("[TB] @ cyc %0d : load_fc_weights done", cycle_cnt);
         end
     endtask

@@ -72,11 +72,13 @@ module cnn_accelerator (
 
     //==========================================================================
     // FC weight BRAM Port A  (PS write, fc_engine 내부 BMG)
+    //   256b × 1024 (720 used). 32-bit MicroBlaze 는 32→256 datawidth converter +
+    //   256-bit AXI BRAM Controller 경유로 write (firmware 는 5760 × 32b 그대로).
     //==========================================================================
-    input  wire        fcw_ena,
-    input  wire [3:0]  fcw_wea,
-    input  wire [12:0] fcw_addra,    // asymmetric: 32b write (Port A), 256b read (Port B 내부)
-    input  wire [31:0] fcw_dina
+    input  wire         fcw_ena,
+    input  wire [31:0]  fcw_wea,
+    input  wire [9:0]   fcw_addra,
+    input  wire [255:0] fcw_dina
 );
 
     //==========================================================================

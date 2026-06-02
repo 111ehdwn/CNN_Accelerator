@@ -20,6 +20,15 @@
 //     in  : result[3:0], img_done, input_consumed
 //
 //   reset_n 은 외부 보드 버튼 (S_AXI_ARESETN 과 별개로 PL 에 직결 — 본 CSR 미관여).
+//
+//   ★ AXI Write 핸드셰이크 (2026-06-01 수정):
+//     기존 state_write FSM (Create-AXI4-Peripheral "lite" 데모 템플릿, axi_inner_ref.v 참조)
+//     은 axi_wready 를 reset 후 항상 1 로 두고 핸드셰이크를 내부 state 에 의존시켜,
+//     마스터/AXI Interconnect 가 WVALID 를 AWVALID 보다 먼저 주는 (합법적) 순서에서
+//     BVALID 가 영영 안 나와 write 가 hang 했다 (실보드: CSR read OK / write hang).
+//     알려진 Xilinx 데모 버그 — robust handshake (AWVALID·WVALID 둘 다 떴을 때만
+//     awready/wready 동시 1-cycle assert, aw_en 패턴) 로 교체. AW/W 순서 무관.
+//     분석·출처: docs/axi_lite_write_hang_fix.md
 //////////////////////////////////////////////////////////////////////////////////
 
 	module csr_axi_slave_lite_v1_0_csr #
@@ -49,59 +58,41 @@
 		input wire  S_AXI_ARESETN,
 		// Write address (issued by master, acceped by Slave)
 		input wire [C_S_AXI_ADDR_WIDTH-1 : 0] S_AXI_AWADDR,
-		// Write channel Protection type. This signal indicates the
-    		// privilege and security level of the transaction, and whether
-    		// the transaction is a data access or an instruction access.
+		// Write channel Protection type.
 		input wire [2 : 0] S_AXI_AWPROT,
-		// Write address valid. This signal indicates that the master signaling
-    		// valid write address and control information.
+		// Write address valid.
 		input wire  S_AXI_AWVALID,
-		// Write address ready. This signal indicates that the slave is ready
-    		// to accept an address and associated control signals.
+		// Write address ready.
 		output wire  S_AXI_AWREADY,
 		// Write data (issued by master, acceped by Slave)
 		input wire [C_S_AXI_DATA_WIDTH-1 : 0] S_AXI_WDATA,
-		// Write strobes. This signal indicates which byte lanes hold
-    		// valid data. There is one write strobe bit for each eight
-    		// bits of the write data bus.
+		// Write strobes.
 		input wire [(C_S_AXI_DATA_WIDTH/8)-1 : 0] S_AXI_WSTRB,
-		// Write valid. This signal indicates that valid write
-    		// data and strobes are available.
+		// Write valid.
 		input wire  S_AXI_WVALID,
-		// Write ready. This signal indicates that the slave
-    		// can accept the write data.
+		// Write ready.
 		output wire  S_AXI_WREADY,
-		// Write response. This signal indicates the status
-    		// of the write transaction.
+		// Write response.
 		output wire [1 : 0] S_AXI_BRESP,
-		// Write response valid. This signal indicates that the channel
-    		// is signaling a valid write response.
+		// Write response valid.
 		output wire  S_AXI_BVALID,
-		// Response ready. This signal indicates that the master
-    		// can accept a write response.
+		// Response ready.
 		input wire  S_AXI_BREADY,
 		// Read address (issued by master, acceped by Slave)
 		input wire [C_S_AXI_ADDR_WIDTH-1 : 0] S_AXI_ARADDR,
-		// Protection type. This signal indicates the privilege
-    		// and security level of the transaction, and whether the
-    		// transaction is a data access or an instruction access.
+		// Protection type.
 		input wire [2 : 0] S_AXI_ARPROT,
-		// Read address valid. This signal indicates that the channel
-    		// is signaling valid read address and control information.
+		// Read address valid.
 		input wire  S_AXI_ARVALID,
-		// Read address ready. This signal indicates that the slave is
-    		// ready to accept an address and associated control signals.
+		// Read address ready.
 		output wire  S_AXI_ARREADY,
 		// Read data (issued by slave)
 		output wire [C_S_AXI_DATA_WIDTH-1 : 0] S_AXI_RDATA,
-		// Read response. This signal indicates the status of the
-    		// read transfer.
+		// Read response.
 		output wire [1 : 0] S_AXI_RRESP,
-		// Read valid. This signal indicates that the channel is
-    		// signaling the required read data.
+		// Read valid.
 		output wire  S_AXI_RVALID,
-		// Read ready. This signal indicates that the master can
-    		// accept the read data and response information.
+		// Read ready.
 		input wire  S_AXI_RREADY
 	);
 
@@ -116,11 +107,7 @@
 	reg [1 : 0] 	axi_rresp;
 	reg  	axi_rvalid;
 
-	// Example-specific design signals
 	// local parameter for addressing 32 bit / 64 bit C_S_AXI_DATA_WIDTH
-	// ADDR_LSB is used for addressing 32/64 bit registers/memories
-	// ADDR_LSB = 2 for 32 bits (n downto 2)
-	// ADDR_LSB = 3 for 64 bits (n downto 3)
 	localparam integer ADDR_LSB = (C_S_AXI_DATA_WIDTH/32) + 1;
 	localparam integer OPT_MEM_ADDR_BITS = 1;
 
@@ -139,87 +126,72 @@
 	assign S_AXI_RRESP	= axi_rresp;
 	assign S_AXI_RVALID	= axi_rvalid;
 
-	//state machine variables
-	reg [1:0] state_write;
+	//state machine variables (read 채널 FSM 만 유지; write 는 robust handshake 로 교체)
 	reg [1:0] state_read;
-	localparam Idle = 2'b00, Raddr = 2'b10, Rdata = 2'b11, Waddr = 2'b10, Wdata = 2'b11;
+	localparam Idle = 2'b00, Raddr = 2'b10, Rdata = 2'b11;
 
 	// ============================================================================
-	// AXI Write 채널 FSM (제공 베이스 유지)
+	// AXI Write 채널 — robust handshake (aw_en 패턴)
+	//   AWVALID·WVALID 가 둘 다 떴을 때만 awready/wready 를 함께 1-cycle assert.
+	//   → W/AW 도착 순서(동시/AW먼저/W먼저) 무관하게 동작. (기존 데모 FSM 의 W-before-AW
+	//     hang 수정 — 파일 헤더 / docs/axi_lite_write_hang_fix.md 참조.)
 	// ============================================================================
-	always @(posedge S_AXI_ACLK)
-	  begin
-	     if (S_AXI_ARESETN == 1'b0)
-	       begin
-	         axi_awready <= 0;
-	         axi_wready <= 0;
-	         axi_bvalid <= 0;
-	         axi_bresp <= 0;
-	         axi_awaddr <= 0;
-	         state_write <= Idle;
-	       end
-	     else
-	       begin
-	         case(state_write)
-	           Idle:
-	             begin
-	               if(S_AXI_ARESETN == 1'b1)
-	                 begin
-	                   axi_awready <= 1'b1;
-	                   axi_wready <= 1'b1;
-	                   state_write <= Waddr;
-	                 end
-	               else state_write <= state_write;
-	             end
-	           Waddr:
-	             begin
-	               if (S_AXI_AWVALID && S_AXI_AWREADY)
-	                  begin
-	                    axi_awaddr <= S_AXI_AWADDR;
-	                    if(S_AXI_WVALID)
-	                      begin
-	                        axi_awready <= 1'b1;
-	                        state_write <= Waddr;
-	                        axi_bvalid <= 1'b1;
-	                      end
-	                    else
-	                      begin
-	                        axi_awready <= 1'b0;
-	                        state_write <= Wdata;
-	                        if (S_AXI_BREADY && axi_bvalid) axi_bvalid <= 1'b0;
-	                      end
-	                  end
-	               else
-	                  begin
-	                    state_write <= state_write;
-	                    if (S_AXI_BREADY && axi_bvalid) axi_bvalid <= 1'b0;
-	                   end
-	             end
-	          Wdata:
-	             begin
-	               if (S_AXI_WVALID)
-	                 begin
-	                   state_write <= Waddr;
-	                   axi_bvalid <= 1'b1;
-	                   axi_awready <= 1'b1;
-	                 end
-	                else
-	                 begin
-	                   state_write <= state_write;
-	                   if (S_AXI_BREADY && axi_bvalid) axi_bvalid <= 1'b0;
-	                 end
-	             end
-	          endcase
-	        end
-	      end
+	reg aw_en;
+
+	// awready : 두 valid + aw_en 일 때 1-cycle
+	always @(posedge S_AXI_ACLK) begin
+	    if (!S_AXI_ARESETN) begin
+	        axi_awready <= 1'b0;
+	        aw_en       <= 1'b1;
+	    end else if (~axi_awready && S_AXI_AWVALID && S_AXI_WVALID && aw_en) begin
+	        axi_awready <= 1'b1;
+	        aw_en       <= 1'b0;
+	    end else if (S_AXI_BREADY && axi_bvalid) begin
+	        aw_en       <= 1'b1;
+	        axi_awready <= 1'b0;
+	    end else begin
+	        axi_awready <= 1'b0;
+	    end
+	end
+
+	// awaddr latch (ready assert 되는 cycle 에)
+	always @(posedge S_AXI_ACLK) begin
+	    if (!S_AXI_ARESETN)
+	        axi_awaddr <= 0;
+	    else if (~axi_awready && S_AXI_AWVALID && S_AXI_WVALID && aw_en)
+	        axi_awaddr <= S_AXI_AWADDR;
+	end
+
+	// wready : 두 valid + aw_en 일 때 1-cycle
+	always @(posedge S_AXI_ACLK) begin
+	    if (!S_AXI_ARESETN)
+	        axi_wready <= 1'b0;
+	    else if (~axi_wready && S_AXI_WVALID && S_AXI_AWVALID && aw_en)
+	        axi_wready <= 1'b1;
+	    else
+	        axi_wready <= 1'b0;
+	end
+
+	// bvalid / bresp : write 성사 시 set, BREADY 에 clear
+	always @(posedge S_AXI_ACLK) begin
+	    if (!S_AXI_ARESETN) begin
+	        axi_bvalid <= 1'b0;
+	        axi_bresp  <= 2'b0;
+	    end else if (axi_awready && S_AXI_AWVALID && ~axi_bvalid && axi_wready && S_AXI_WVALID) begin
+	        axi_bvalid <= 1'b1;
+	        axi_bresp  <= 2'b0;
+	    end else if (S_AXI_BREADY && axi_bvalid) begin
+	        axi_bvalid <= 1'b0;
+	    end
+	end
 
 	// ============================================================================
-	// Write address index (현재 write 가 가리키는 register)
+	// Write register select / enable (주소+데이터 모두 handshake 된 cycle 에 1-cycle)
 	// ============================================================================
+	wire slv_reg_wren = axi_wready && S_AXI_WVALID && axi_awready && S_AXI_AWVALID;
 	wire [OPT_MEM_ADDR_BITS:0] wr_index =
-	       (S_AXI_AWVALID) ? S_AXI_AWADDR[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB]
-	                       : axi_awaddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB];
-	wire wr_en = S_AXI_WVALID;
+	       axi_awaddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB];
+	wire wr_en = slv_reg_wren;
 
 	// ============================================================================
 	// CTRL register : enable(level), start/img_ready(1-cycle pulse)
@@ -303,7 +275,7 @@
 	end
 
 	// ============================================================================
-	// AXI Read 채널 FSM (제공 베이스 유지)
+	// AXI Read 채널 FSM (제공 베이스 유지 — read 는 정상 동작 확인됨)
 	// ============================================================================
 	always @(posedge S_AXI_ACLK)
 	  begin

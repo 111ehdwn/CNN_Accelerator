@@ -73,10 +73,10 @@ module tb_cnn_accelerator_multi;
     reg  [9:0]  c2w_addra = 10'd0;
     reg  [31:0] c2w_dina  = 32'd0;
 
-    reg         fcw_ena   = 1'b0;
-    reg  [3:0]  fcw_wea   = 4'd0;         // byte-write (AXI WSTRB)
-    reg  [12:0] fcw_addra = 13'd0;
-    reg  [31:0] fcw_dina  = 32'd0;
+    reg          fcw_ena   = 1'b0;
+    reg  [31:0]  fcw_wea   = 32'd0;        // 256-bit byte-write (AXI WSTRB)
+    reg  [9:0]   fcw_addra = 10'd0;
+    reg  [255:0] fcw_dina  = 256'd0;
 
     //==========================================================================
     // DUT
@@ -177,16 +177,14 @@ module tb_cnn_accelerator_multi;
                         w_odd_concat [c*8 +: 8] = w1;
                     end
                     word = {w_odd_concat, w_even_concat};
-                    // 256b word → 8 × 32b : addr = (pair*144+s)*8 + k
-                    for (k = 0; k < 8; k = k + 1) begin
-                        @(negedge clk);
-                        fcw_ena   = 1'b1; fcw_wea = 4'hF;
-                        fcw_addra = (pair*144 + s)*8 + k;
-                        fcw_dina  = word[k*32 +: 32];
-                    end
+                    // 256b full-word write : addr = pair*144 + s
+                    @(negedge clk);
+                    fcw_ena   = 1'b1; fcw_wea = 32'hFFFF_FFFF;
+                    fcw_addra = pair*144 + s;
+                    fcw_dina  = word;
                 end
             end
-            @(negedge clk); fcw_ena = 1'b0; fcw_wea = 4'd0; fcw_addra = 13'd0; fcw_dina = 32'd0;
+            @(negedge clk); fcw_ena = 1'b0; fcw_wea = 32'd0; fcw_addra = 10'd0; fcw_dina = 256'd0;
         end
     endtask
 
