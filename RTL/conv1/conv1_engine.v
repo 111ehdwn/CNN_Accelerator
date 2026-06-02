@@ -3,8 +3,11 @@
 // Module Name: conv1_engine
 // Description:
 //   - Fixed the premature 'out_sel_r' bug and 1-clk data shift mismatch.
-//   - Aligned all control paths (we, addr, sel) with the exact 3-cycle delay
-//     of the hardware data path (PE + Adder Tree + Truncate/ReLU).
+//   - Aligned all control paths (we, addr, sel) with the hardware data path.
+//     ★ 300MHz refactor (docs/conv1_timing.md): bram_input L=2 + conv1_adder_tree
+//       4-stage pipeline. datapath latency = window(L+1) + pe(4) + adder(4) + trunc(1).
+//       보상은 conv1_fsm 의 OUT_DELAY(=L+N+4=10) 와 FLUSH_LEN(=12) 에서 흡수 —
+//       엔진의 we_pipe(3) / ch_final(1) / bank_sel_pipe(3) 정렬 구조는 그대로.
 //   - 4-way handshake (prior_wdone / succ_rdone / rdone / wdone) + internal
 //     ping-pong bank (input_bank_sel / bank_sel toggle FF on rdone / wdone).
 //   - bank_sel 은 addr_pipe 와 같은 3-stage shift (bank_sel_pipe) 통해
@@ -38,9 +41,10 @@ module conv1_engine (
     output wire              in_bram_en,
     input  wire signed [7:0] in_bram_dout,
 
-    // Weight BRAM Port A (Write from TB/PS — conv2 패턴과 동일)
+    // Conv1 weight BRAM Port A (PS write via AXI BRAM Ctrl)
+    //   conv2 와 일관: weight BRAM 을 engine 내부에 인스턴스화하고 Port A 만 노출.
     input  wire        c1w_ena,
-    input  wire        c1w_wea,
+    input  wire [3:0]  c1w_wea,             // byte-write (AXI WSTRB[3:0])
     input  wire [5:0]  c1w_addra,
     input  wire [31:0] c1w_dina,
 
@@ -159,33 +163,33 @@ module conv1_engine (
     assign in_bram_en   = pipe_en;
 
     //==========================================================================
-    // 3. conv1_weight_bram (내부 인스턴스 — conv2 패턴)
-    //   Port A : c1w_ena/wea/addra/dina (TB/PS 에서 write)
-    //   Port B : weight_loader 가 read (internal wire)
-    //==========================================================================
-    wire [5:0]  w_bram_addr;
-    wire        w_bram_en;
-    wire [31:0] w_bram_dout;
-
-    conv1_weight_bram w_bmg (
-        .clka   (clk),
-        .ena    (c1w_ena),
-        .wea    (c1w_wea),
-        .addra  (c1w_addra),
-        .dina   (c1w_dina),
-        .clkb   (clk),
-        .enb    (w_bram_en),
-        .addrb  (w_bram_addr),
-        .doutb  (w_bram_dout),
-        .regceb (1'b1)
-    );
-
-    //==========================================================================
-    // 4. weight_loader
+    // 3. weight BRAM (engine 내부 인스턴스 — conv2 와 일관) + weight_loader
     //==========================================================================
     wire [24:0]  pe_packed_w;
     wire [17:0]  pe_load_en;
     wire         pe_load_idx;
+
+    // weight_loader ↔ conv1_weight_bram Port B (내부 결선)
+    wire [5:0]  w_bram_addr;
+    wire        w_bram_en;
+    wire [31:0] w_bram_dout;
+
+    // Conv1 weight BMG (Vivado Block Memory Generator IP — conv1_engine 내부 인스턴스, conv2/fc 와 일관)
+    //   Port A: PS write (c1w_ena/addra/dina), Port B: weight_loader read (L=2, regceb).
+    //   ★ ENA=c1w_ena, WEA=c1w_wea[3:0] byte-write (AXI WSTRB 직결).
+    conv1_weight_bram c1w_bmg_inst (
+        .clka  (clk),
+        .ena   (c1w_ena),
+        .wea   (c1w_wea),
+        .addra (c1w_addra),
+        .dina  (c1w_dina),
+
+        .clkb  (clk),
+        .enb   (w_bram_en),
+        .addrb (w_bram_addr),
+        .doutb (w_bram_dout),
+        .regceb(1'b1)
+    );
 
     conv1_weight_loader #(.NUM_PE(18), .ADDR_W(6)) wloader (
         .clk         (clk),
@@ -201,7 +205,7 @@ module conv1_engine (
     );
 
     //==========================================================================
-    // 5. line_buffer x 2 (27-depth 구동으로 28클럭 지연 유도)
+    // 4. line_buffer x 2 (27-depth 구동으로 28클럭 지연 유도)
     //
     //   공용 모듈 `line_buffer` (RTL/core/) 사용. active-high rst 통일.
     //   lb_rst_combined = rst | lb_rst (시스템 rst 또는 RUN2 전 lb_rst 둘 중 하나)
@@ -220,7 +224,7 @@ module conv1_engine (
     );
 
     //==========================================================================
-    // 6. window_register
+    // 5. window_register
     //
     //   공용 모듈 `window_register` (RTL/conv2/) 사용. active-high rst.
     //==========================================================================
@@ -240,7 +244,7 @@ module conv1_engine (
     assign kx[6]=k6; assign kx[7]=k7; assign kx[8]=k8;
 
     //==========================================================================
-    // 7. pe_cell x 18  (공용 모듈 `pe_cell` — RTL/core/)
+    // 6. pe_cell x 18  (공용 모듈 `pe_cell` — RTL/core/)
     //
     //   active-high `rst` 로 통일됨 → conv1 의 active-low rst_n 을 `~rst_n` 으로 변환.
     //   PE 는 round 전환 시 weight 유지 필수 → lb_rst 와 결합하지 않음 (시스템 reset 만).
@@ -281,8 +285,10 @@ module conv1_engine (
     endgenerate
 
     //==========================================================================
-    // 8. adder_tree x 2 (1클럭 내부 레지스터 지연 포함)
+    // 7. adder_tree x 2 (★ 4-stage pipeline, 300MHz refactor)
     //   Conv1 전용 (9:2 토폴로지). RTL/conv1/conv1_adder_tree.v.
+    //   기존 1-stage 조합 가산 → 4-stage (1 add-level/stage). latency 1→4.
+    //   포트 무변경 → 결선 동일. conv1_fsm OUT_DELAY 가 +3 흡수.
     //==========================================================================
     wire signed [23:0] sum0_g1, sum1_g1, sum0_g2, sum1_g2;
 
@@ -309,7 +315,7 @@ module conv1_engine (
     );
 
     //==========================================================================
-    // 9. truncate_relu (공용 모듈 — RTL/core/truncate_relu.v, N=4)
+    // 8. truncate_relu (공용 모듈 — RTL/core/truncate_relu.v, N=4)
     //
     //   Channel 매핑: ch0=sum0_g1, ch1=sum1_g1, ch2=sum0_g2, ch3=sum1_g2
     //   (Conv1 design.md §5-4 참조)
@@ -331,7 +337,7 @@ module conv1_engine (
     );
 
     //==========================================================================
-    // 10. 제어 신호 동기화를 위한 3단 파이프라인 시프트 체인
+    // 9. 제어 신호 동기화를 위한 3단 파이프라인 시프트 체인
     //   chX_final: tr_outX 의 1 cycle 지연 latch (round 0 용)
     //   round 1 은 tr_outX 직접 사용 (1 cycle 보정)
     //==========================================================================
@@ -379,7 +385,7 @@ module conv1_engine (
     end
 
     //==========================================================================
-    // 11. c1c2 BMG Port A 결선
+    // 10. c1c2 BMG Port A 결선
     //
     //   Round 0 (sel_pipe[2]=0): ch0..3 (oc0..3) → byte 0..3, wea = 8'b00001111
     //     - ch0..3 데이터는 ch*_final (1 cycle 지연된 latch) 사용

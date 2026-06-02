@@ -21,14 +21,18 @@
 //     1. IDLE  : prior_wdone + output bank 여유 대기
 //     2. LOAD  : weight_loader 완료 대기
 //     3. RUN1  : sel=0, 28×28 스캔 (oc0~3)
-//     4. FLUSH1: 파이프라인 드레인 6사이클
+//     4. FLUSH1: 파이프라인 드레인 FLUSH_LEN(=12) 사이클
 //     5. LBRST : line_buffer + window_register 리셋 1사이클
 //     6. RUN2  : sel=1, 28×28 재스캔 (oc4~7) → 끝 시점 rdone pulse
-//     7. FLUSH2: 파이프라인 드레인 6사이클
+//     7. FLUSH2: 파이프라인 드레인 FLUSH_LEN(=12) 사이클
 //     8. DONE  : done + wdone pulse 1사이클
 //
-//   파이프라인 딜레이:
-//     pe_cell:       4, adder_tree: 1, truncate_relu: 1 → 총 6
+//   파이프라인 딜레이 (300MHz refactor, docs/conv1_timing.md 참조):
+//     OUT_DELAY (valid_sr 깊이) = L + N_adder + 4
+//       L = bram_input read latency (L=2, Primitives Output Register)
+//       N_adder = conv1_adder_tree pipeline stage (=4)
+//     → OUT_DELAY = 2 + 4 + 4 = 10.  write = OUT_DELAY + we_pipe(3) = T_addr + L + N + 7.
+//     FLUSH_LEN = OUT_DELAY + 2 (마지막 픽셀 drain 완전; off-by-one 수정).
 //////////////////////////////////////////////////////////////////////////////////
 
 module conv1_fsm (
@@ -81,7 +85,14 @@ module conv1_fsm (
     //==========================================================================
     localparam IMG_W      = 28;
     localparam IMG_H      = 28;
-    localparam PIPE_DELAY = 6;
+
+    // 300MHz refactor 파이프라인 보상 (docs/conv1_timing.md §3, §6)
+    //   PIPE_DELAY = OUT_DELAY = L + N_adder + 4  (valid_sr/row_sr/col_sr/sel_sr 깊이)
+    //   FLUSH_LEN  = OUT_DELAY + 2                (마지막 픽셀 완전 drain)
+    localparam BRAM_L       = 2;                       // bram_input L=2 (Primitives Output Register)
+    localparam ADDER_STAGES = 4;                       // conv1_adder_tree pipeline depth
+    localparam PIPE_DELAY   = BRAM_L + ADDER_STAGES + 4;
+    localparam FLUSH_LEN    = PIPE_DELAY + 2;
 
     reg [4:0] row;
     reg [4:0] col;
@@ -121,9 +132,9 @@ module conv1_fsm (
     wire pixel_valid = run_state && (row >= 5'd2) && (col >= 5'd2);
 
     //==========================================================================
-    // flush 카운터
+    // flush 카운터 (FLUSH_LEN 까지 카운트 → 4-bit)
     //==========================================================================
-    reg [2:0] flush_cnt;
+    reg [3:0] flush_cnt;
 
     //==========================================================================
     // Handshake counters (race-free combinational next value)
@@ -178,7 +189,7 @@ module conv1_fsm (
             done       <= 1'b0;
             rdone      <= 1'b0;
             wdone      <= 1'b0;
-            flush_cnt  <= 3'd0;
+            flush_cnt  <= 4'd0;
         end else begin
             // default deasserts
             load_start <= 1'b0;
@@ -214,7 +225,7 @@ module conv1_fsm (
                     pipe_en <= 1'b1;
                     sel     <= 1'b0;
                     if (scan_done) begin
-                        flush_cnt <= 3'd0;
+                        flush_cnt <= 4'd0;
                         state     <= FLUSH1;
                     end
                 end
@@ -223,9 +234,9 @@ module conv1_fsm (
                 FLUSH1: begin
                     pipe_en <= 1'b1;
                     sel     <= 1'b0;
-                    if (flush_cnt == PIPE_DELAY-1) begin
+                    if (flush_cnt == FLUSH_LEN-1) begin
                         pipe_en   <= 1'b0;
-                        flush_cnt <= 3'd0;
+                        flush_cnt <= 4'd0;
                         state     <= LBRST;
                     end else begin
                         flush_cnt <= flush_cnt + 1'b1;
@@ -245,7 +256,7 @@ module conv1_fsm (
                     pipe_en <= 1'b1;
                     sel     <= 1'b1;
                     if (scan_done) begin
-                        flush_cnt <= 3'd0;
+                        flush_cnt <= 4'd0;
                         state     <= FLUSH2;
                         rdone     <= 1'b1;        // ★ input read 완료 알림
                     end
@@ -255,9 +266,9 @@ module conv1_fsm (
                 FLUSH2: begin
                     pipe_en <= 1'b1;
                     sel     <= 1'b1;
-                    if (flush_cnt == PIPE_DELAY-1) begin
+                    if (flush_cnt == FLUSH_LEN-1) begin
                         pipe_en   <= 1'b0;
-                        flush_cnt <= 3'd0;
+                        flush_cnt <= 4'd0;
                         state     <= DONE;
                     end else begin
                         flush_cnt <= flush_cnt + 1'b1;

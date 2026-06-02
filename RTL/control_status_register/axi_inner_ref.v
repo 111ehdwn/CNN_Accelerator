@@ -1,7 +1,7 @@
 
 `timescale 1 ns / 1 ps
 
-	module csr_slave_lite_v1_0_CSR_AXI #
+	module myip_slave_lite_v1_0_S00_AXI #
 	(
 		// Users to add parameters here
 
@@ -15,8 +15,7 @@
 	)
 	(
 		// Users to add ports here
-        output wire start,
-        input wire done,
+
 		// User ports ends
 		// Do not modify the ports beyond this line
 
@@ -192,23 +191,6 @@
 	        end
 	      end
 
-
-	// ================================================================================================================
-	// Sticky-Latch (for detection of done 1-cycle pulse & latch until done)
-	reg done_r;
-	assign start = slv_reg1[0];
-
-	always @(posedge S_AXI_ACLK) begin
-	    if (!S_AXI_ARESETN) begin       // if AXI RESET     => set done_r to 0(baseline)
-            done_r <= 1'b0;
-	    end else if (start) begin // if start working => set done_r to 0(baseline)
-            done_r <= 1'b0;
-	    end else if (done) begin        // if done=1(just for one pulse) => set done_r to 1(latched signal)
-            done_r <= 1'b1;
-	    end
-	end
-	// ================================================================================================================
-
 	// Implement memory mapped register select and write logic generation
 	// The write data is accepted and written to memory mapped registers when
 	// axi_awready, S_AXI_WVALID, axi_wready and S_AXI_WVALID are asserted. Write strobes are used to
@@ -228,8 +210,6 @@
 	      slv_reg3 <= 0;
 	    end
 	  else begin
-	  slv_reg0 <= {31'b0, done_r};
-	  slv_reg1 <= 0; // start를 계속 0으로 초기화 => start 신호가 1클럭 유지되는 펄스가 되도록!!
 	    if (S_AXI_WVALID)
 	      begin
 	        case ( (S_AXI_AWVALID) ? S_AXI_AWADDR[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] : axi_awaddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] )
@@ -322,6 +302,7 @@
 	// Implement memory mapped register select and read logic generation
 	  assign S_AXI_RDATA = (axi_araddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] == 2'h0) ? slv_reg0 : (axi_araddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] == 2'h1) ? slv_reg1 : (axi_araddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] == 2'h2) ? slv_reg2 : (axi_araddr[ADDR_LSB+OPT_MEM_ADDR_BITS:ADDR_LSB] == 2'h3) ? slv_reg3 :0;
 	// Add user logic here
+
 	// User logic ends
 
 	endmodule

@@ -14,18 +14,25 @@
 //   bank_sel = 0 (single image, ping-pong 미사용)
 //
 //   필요한 BMG IP (Vivado 프로젝트에 미리 생성):
-//     bram_input           (Port A 32b × 512, Port B 8b × 2048, asymmetric, L=1)
-//     conv1_weight_bram    (32b × 64,  L=2, REGCEB 노출)
-//     bram_c1_to_c2        (64b × 2048, L=2, byte-write 8-bit)
-//     conv2_weight_bram    (32b × 1024, L=2, REGCEB 노출)
-//     bram_c2_to_pool      (128b × 2048, L=1)
+//     bram_input           (TB 인스턴스)         Port A 32b×512 / Port B 8b×2048, asymmetric, L=1
+//     bram_c1_to_c2        (TB 인스턴스)         64b×2048, L=2, byte-write 8-bit
+//     bram_c2_to_pool      (TB 인스턴스)         128b×2048, L=1
+//     conv1_weight_bram    (conv1_engine 내부)   32b×64,  L=2, REGCEB
+//     conv2_weight_bram    (conv2_engine 내부)   32b×1024, L=2, REGCEB
 //   상세 spec: docs/ip_spec/block_memory_generator.md
 //////////////////////////////////////////////////////////////////////////////////
 
-`define CONV1_INPUT_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv1_input.hex"
-`define CONV1_WEIGHT_HEX    "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv1_weights_simd.hex"
-`define CONV2_WEIGHT_HEX    "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_weights_simd.hex"
-`define CONV2_EXPECTED_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_output_c2pool.hex"
+`ifdef __ICARUS__
+  `define CONV1_INPUT_HEX     "data/single_img/conv1_input.hex"
+  `define CONV1_WEIGHT_HEX    "data/weights_simd/conv1_weights_simd.hex"
+  `define CONV2_WEIGHT_HEX    "data/weights_simd/conv2_weights_simd.hex"
+  `define CONV2_EXPECTED_HEX  "data/single_img/conv2_output_c2pool.hex"
+`else
+  `define CONV1_INPUT_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv1_input.hex"
+  `define CONV1_WEIGHT_HEX    "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv1_weights_simd.hex"
+  `define CONV2_WEIGHT_HEX    "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_weights_simd.hex"
+  `define CONV2_EXPECTED_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/conv2_output_c2pool.hex"
+`endif
 
 
 module tb_conv1_conv2;
@@ -35,8 +42,7 @@ module tb_conv1_conv2;
     //   Conv1/Conv2 모두 active-high rst (= ~rst_n) 사용 (시스템 통일).
     //==========================================================================
     reg clk = 1'b0;
-    reg rst_n = 1'b0;
-    wire rst = ~rst_n;
+    reg rst = 1'b1;        // active-high (시스템 통일)
     always #5 clk = ~clk;
 
     //==========================================================================
@@ -55,21 +61,18 @@ module tb_conv1_conv2;
     //==========================================================================
     // bram_input (asymmetric: Port A 32-bit × 512, Port B 8-bit × 2048)
     reg          in_ena   = 1'b0;
-    reg          in_wea   = 1'b0;
+    reg  [3:0]   in_wea   = 4'd0;
     reg  [8:0]   in_addra = 9'd0;             // word addr
     reg  [31:0]  in_dina  = 32'd0;            // 4 bytes packed
     wire [10:0]  in_addrb;                    // byte addr
     wire         in_enb;
     wire signed [7:0] in_doutb;
 
-    // conv1_weight_bram
-    reg          w1_ena   = 1'b0;
-    reg          w1_wea   = 1'b0;
-    reg  [5:0]   w1_addra = 6'd0;
-    reg  [31:0]  w1_dina  = 32'd0;
-    wire [5:0]   w1_addrb;
-    wire         w1_enb;
-    wire [31:0]  w1_doutb;
+    // conv1 weight Port A (conv1_engine 내부 BMG — TB 는 Port A 만 구동)
+    reg          c1w_ena    = 1'b0;
+    reg  [3:0]   c1w_wea    = 4'd0;
+    reg  [5:0]   c1w_addra  = 6'd0;
+    reg  [31:0]  c1w_dina   = 32'd0;
 
     // bram_c1_to_c2 (Conv1 write A, Conv2 read B)
     wire         c1c2_we_a;
@@ -82,6 +85,7 @@ module tb_conv1_conv2;
 
     // conv2_weight_bram (TB write A, Conv2 read B)
     reg          c2w_ena   = 1'b0;
+    reg  [3:0]   c2w_wea   = 4'd0;
     reg  [9:0]   c2w_addra = 10'd0;
     reg  [31:0]  c2w_dina  = 32'd0;
 
@@ -103,13 +107,7 @@ module tb_conv1_conv2;
         .addrb (in_addrb), .doutb (in_doutb)
     );
 
-    conv1_weight_bram w1_bmg (
-        .clka  (clk), .ena (w1_ena), .wea (w1_wea),
-        .addra (w1_addra), .dina (w1_dina),
-        .clkb  (clk), .enb (w1_enb),
-        .addrb (w1_addrb), .doutb (w1_doutb),
-        .regceb(1'b1)
-    );
+    // conv1_weight_bram 은 conv1_engine 내부 인스턴스로 이동 (TB 외부 인스턴스 제거)
 
     bram_c1_to_c2 c1c2_bmg (
         .clka  (clk), .ena (c1c2_we_a), .wea (c1c2_wea_a),
@@ -122,7 +120,8 @@ module tb_conv1_conv2;
         .clka  (clk), .ena (c2pool_we_a), .wea (c2pool_we_a),
         .addra (c2pool_addr_a), .dina (c2pool_din_a),
         .clkb  (clk), .enb (c2pool_enb_b),
-        .addrb (c2pool_addr_b), .doutb (c2pool_doutb_b)
+        .addrb (c2pool_addr_b), .doutb (c2pool_doutb_b),
+        .regceb (1'b1)
     );
 
     //==========================================================================
@@ -143,9 +142,10 @@ module tb_conv1_conv2;
         .in_bram_en   (in_enb),
         .in_bram_dout (in_doutb),
 
-        .w_bram_addr  (w1_addrb),
-        .w_bram_en    (w1_enb),
-        .w_bram_dout  (w1_doutb),
+        .c1w_ena      (c1w_ena),
+        .c1w_wea      (c1w_wea),
+        .c1w_addra    (c1w_addra),
+        .c1w_dina     (c1w_dina),
 
         .c1c2_we      (c1c2_we_a),
         .c1c2_wea     (c1c2_wea_a),
@@ -169,6 +169,7 @@ module tb_conv1_conv2;
         .start       (conv2_start),
 
         .c2w_ena     (c2w_ena),
+        .c2w_wea     (c2w_wea),
         .c2w_addra   (c2w_addra),
         .c2w_dina    (c2w_dina),
 
@@ -202,7 +203,7 @@ module tb_conv1_conv2;
     integer cycle_at_conv2_start, cycle_at_conv2_wdone;
 
     initial cycle_cnt = 0;
-    always @(posedge clk) if (rst_n) cycle_cnt <= cycle_cnt + 1;
+    always @(posedge clk) if (!rst) cycle_cnt <= cycle_cnt + 1;
 
     //==========================================================================
     // Tasks: init_* and pulse_*
@@ -213,12 +214,12 @@ module tb_conv1_conv2;
             $display("[TB] @ %0d : init_input (196 word × 32-bit, bank 0)", cycle_cnt);
             for (k = 0; k < 196; k = k + 1) begin
                 @(negedge clk);
-                in_ena = 1'b1; in_wea = 1'b1;
+                in_ena = 1'b1; in_wea = 4'hF;
                 in_addra = {1'b0, k[7:0]};         // bank 0, word addr 0..195
                 in_dina  = {input_mem[k*4 + 3], input_mem[k*4 + 2],
                             input_mem[k*4 + 1], input_mem[k*4 + 0]};
             end
-            @(negedge clk); in_ena = 1'b0; in_wea = 1'b0;
+            @(negedge clk); in_ena = 1'b0; in_wea = 4'd0;
         end
     endtask
 
@@ -228,10 +229,11 @@ module tb_conv1_conv2;
             $display("[TB] @ %0d : init_weight1 (36)", cycle_cnt);
             for (wi = 0; wi < 36; wi = wi + 1) begin
                 @(negedge clk);
-                w1_ena = 1'b1; w1_wea = 1'b1;
-                w1_addra = wi[5:0]; w1_dina = weight1_mem[wi];
+                c1w_ena = 1'b1;
+                c1w_wea = 4'hF;
+                c1w_addra = wi[5:0]; c1w_dina = weight1_mem[wi];
             end
-            @(negedge clk); w1_ena = 1'b0; w1_wea = 1'b0;
+            @(negedge clk); c1w_ena = 1'b0; c1w_wea = 4'd0;
         end
     endtask
 
@@ -242,9 +244,10 @@ module tb_conv1_conv2;
             for (wi = 0; wi < 576; wi = wi + 1) begin
                 @(negedge clk);
                 c2w_ena = 1'b1;
+                c2w_wea = 4'hF;
                 c2w_addra = wi[9:0]; c2w_dina = weight2_mem[wi];
             end
-            @(negedge clk); c2w_ena = 1'b0;
+            @(negedge clk); c2w_ena = 1'b0; c2w_wea = 4'd0;
         end
     endtask
 
@@ -316,10 +319,10 @@ module tb_conv1_conv2;
         $readmemh(`CONV2_EXPECTED_HEX,  expected_c2pool);
 
         // Reset
-        rst_n = 1'b0;
+        rst = 1'b1;
         repeat (10) @(posedge clk);
         @(negedge clk);
-        rst_n = 1'b1;
+        rst = 1'b0;
         $display("[TB] @ %0d : reset released", cycle_cnt);
 
         // Initialize all BMG (parallel-able but sequential 으로 단순화)

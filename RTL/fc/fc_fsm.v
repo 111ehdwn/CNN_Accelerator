@@ -49,7 +49,7 @@ module fc_fsm (
 
     // Datapath latency drain margin.
     // Engine aligns control internally; this just keeps busy long enough after last issue.
-    localparam [3:0] DRAIN_MAX = 4'd10;   // PE 2→4 cycle (+2): datapath drain margin 확대
+    localparam [3:0] DRAIN_MAX = 4'd11;   // poolfc L=2(+1) 반영: datapath drain margin (기존 10 +1)
 
     reg [1:0] state;
     reg [3:0] drain_cnt;
@@ -85,7 +85,7 @@ module fc_fsm (
     wire ready_to_compute = data_ready && output_avail;
 
     //==========================================================================
-    // start edge-detect - system arm pulse (init 용 backup trigger).
+    // start edge-detect — system arm pulse (init 용 backup trigger).
     //
     //   conv1 / maxpool 패턴: 첫 image 진입 전 PS 가 한 번 pulse 하면 즉시 COMPUTE 진입.
     //   이후 image 는 prior_wdone 만으로 자동 trigger (data_ready 가 다음 cycle 에 true).
@@ -116,7 +116,7 @@ module fc_fsm (
                 // IDLE: 새 image 대기.
                 //   - ready_to_compute (= data_ready, prior_wdone 도착) 또는
                 //   - start_pulse (system arm) 이면 즉시 COMPUTE 진입.
-                //   - conv1 / maxpool 패턴 정합 - image-by-image trigger 는 handshake 만.
+                //   - conv1 / maxpool 패턴 정합 — image-by-image trigger 는 handshake 만.
                 //--------------------------------------------------------------
                 IDLE: begin
                     s_cnt     <= 8'd0;
@@ -195,7 +195,7 @@ module fc_fsm (
     // Handshake counter register update (next value 그대로 NBA)
     //   prior_wdone increments available written banks.
     //   rdone consumes one readable bank.
-    //   *_next 는 위에서 combinational 으로 계산 - race-free.
+    //   *_next 는 위에서 combinational 으로 계산 — race-free.
     //==========================================================================
     always @(posedge clk) begin
         if (rst)

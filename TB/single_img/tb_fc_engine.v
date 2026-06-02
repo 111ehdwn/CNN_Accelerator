@@ -8,10 +8,10 @@
 //     TB PS-write   → fc_weight_bram (behavioral, 720 entries)
 //
 //   Handshake (new conv2-pattern):
-//     start       : system arm pulse - init 1회만 (이후 image 는 handshake 자동)
+//     start       : system arm pulse — init 1회만 (이후 image 는 handshake 자동)
 //     prior_wdone : image trigger pulse (= maxpool.wdone direct wire emul)
-//     rdone       : FC 가 image read 완료 - 모니터링만
-//     class_valid : argmax 결과 ready - 1-cycle pulse
+//     rdone       : FC 가 image read 완료 — 모니터링만
+//     class_valid : argmax 결과 ready — 1-cycle pulse
 //
 //   Bank format (new):
 //     poolfc_addr = {input_bank_sel, s_cnt[7:0]}   ← maxpool 의 write 포맷과 일치
@@ -20,7 +20,7 @@
 //     단일 image TB 는 bank=0 만 사용 (FSM 의 input_bank_sel reset=0).
 //
 //   Verification:
-//     1. 10 OC logits (24-bit signed) per pair - pre-argmax 정확성.
+//     1. 10 OC logits (24-bit signed) per pair — pre-argmax 정확성.
 //     2. argmax class_idx (= 5, expected).
 //
 //   Data files:
@@ -30,8 +30,14 @@
 
 // 데이터 경로는 다른 TB(tb_conv1_conv2_maxpool_multi 등)와 동일 베이스로 통일.
 //   C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/
-`define POOLFC_HEX  "C:/Users/111eh/INTELLIGENT_SYSTEM_DESIGN/assign4_code/CNN_Accelerator/data/single_img/maxpool_output.hex"
-`define FCW_HEX     "C:/Users/111eh/INTELLIGENT_SYSTEM_DESIGN/assign4_code/CNN_Accelerator/data/weights_simd/fc_weights_simd.hex"
+`ifdef __ICARUS__
+  `define POOLFC_HEX  "data/single_img/maxpool_output.hex"
+  `define FCW_HEX     "data/weights_simd/fc_weights_simd.hex"
+`else
+  `define POOLFC_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/maxpool_output.hex"
+  `define FCW_HEX     "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/fc_weights_simd.hex"
+`endif
+
 
 module tb_fc_engine;
 
@@ -73,6 +79,7 @@ module tb_fc_engine;
 
     // Weight BMG Port A (TB 가 PS-style sequential write)
     reg          fcw_ena      = 1'b0;
+    reg  [31:0]  fcw_wea      = 32'd0;
     reg  [9:0]   fcw_addra    = 10'd0;
     reg  [255:0] fcw_dina     = 256'd0;
 
@@ -90,6 +97,7 @@ module tb_fc_engine;
         .start       (start),
 
         .fcw_ena     (fcw_ena),
+        .fcw_wea     (fcw_wea),
         .fcw_addra   (fcw_addra),
         .fcw_dina    (fcw_dina),
 
@@ -135,10 +143,13 @@ module tb_fc_engine;
         end
     end
 
-    // poolfc BMG behavioral (L=1)
+    // poolfc BMG behavioral (L=2: core read reg(ENB) + output primitive reg(REGCEB tied 1))
+    //   ★ 출력 reg 는 ENB 게이팅 금지 — 마지막 read(pair4 sp143) 직후 ENB=0 에서도
+    //   REGCEB=1(항상 follow) 이라야 doutb 전파 (bram_c2_to_pool / 실 IP 와 동일).
+    reg [127:0] poolfc_dout_i;
     always @(posedge clk) begin
-        if (poolfc_re)
-            poolfc_dout <= poolfc_mem[poolfc_addr];
+        if (poolfc_re) poolfc_dout_i <= poolfc_mem[poolfc_addr];  // core: ENB gated
+        poolfc_dout <= poolfc_dout_i;                              // output reg: 항상 follow
     end
 
     //==========================================================================
@@ -164,6 +175,7 @@ module tb_fc_engine;
         reg signed [16:0] w0_packed_17;
         reg signed [7:0]  w1_packed_8;
         reg [127:0]       w_even_concat, w_odd_concat;
+        reg [255:0]       word;
         begin
             $readmemh(`FCW_HEX, weight_simd_mem);
             $display("[TB] %s loaded (%0d entries)", `FCW_HEX, 11520);
@@ -181,14 +193,17 @@ module tb_fc_engine;
                         w_even_concat[c*8 +: 8] = w0;
                         w_odd_concat [c*8 +: 8] = w1;
                     end
+                    word = {w_odd_concat, w_even_concat};
                     @(negedge clk);
                     fcw_ena   = 1'b1;
-                    fcw_addra = pair * 144 + s;
-                    fcw_dina  = {w_odd_concat, w_even_concat};
+                    fcw_wea   = 32'hFFFF_FFFF;       // 256-bit full-word write
+                    fcw_addra = pair*144 + s;
+                    fcw_dina  = word;
                 end
             end
             @(negedge clk);
             fcw_ena   = 1'b0;
+            fcw_wea   = 32'd0;
             fcw_addra = 10'd0;
             fcw_dina  = 256'd0;
             $display("[TB] Weight BRAM write done (720 entries)");
@@ -294,7 +309,7 @@ module tb_fc_engine;
             if (rdone)
                 $display("[DBG H] cyc=%0d : fc.rdone (image read 완료)", cycle_cnt);
             if (class_valid)
-                $display("[DBG H] cyc=%0d : fc.class_valid pulsed - class_idx=%0d",
+                $display("[DBG H] cyc=%0d : fc.class_valid pulsed — class_idx=%0d",
                          cycle_cnt, class_idx);
         end
     end
@@ -305,7 +320,7 @@ module tb_fc_engine;
     integer timeout_cnt;
     initial begin : main
         $display("============================================================");
-        $display("[TB] tb_fc_engine - single-image bit-exact verification");
+        $display("[TB] tb_fc_engine — single-image bit-exact verification");
         $display("     ACC_W=%0d, CLK_PERIOD=%0d ns", ACC_W, CLK_PERIOD);
         $display("     Handshake: start (arm) + prior_wdone (image trigger)");
         $display("     Bank format: poolfc_addr = {input_bank_sel, s_cnt[7:0]}");
@@ -320,7 +335,7 @@ module tb_fc_engine;
         load_weights();
         repeat (3) @(posedge clk);
 
-        // 2. System arm pulse - conv1 / maxpool 패턴: 첫 image 진입 전 한 번.
+        // 2. System arm pulse — conv1 / maxpool 패턴: 첫 image 진입 전 한 번.
         //    이후 image 는 prior_wdone 만으로 자동 진행 (FSM 의 ready_to_compute).
         @(negedge clk); start = 1'b1;
         @(negedge clk); start = 1'b0;
@@ -349,7 +364,7 @@ module tb_fc_engine;
         $display("[FINAL]");
         $display("  pair_done_cnt   = %0d / 5", pair_done_cnt);
         $display("  logit pass/fail = %0d / %0d  (10 OC total)", pass_cnt, fail_cnt);
-        $display("  class_idx       = %0d (expected %0d) - %s",
+        $display("  class_idx       = %0d (expected %0d) — %s",
                  class_idx, EXP_CLS, (class_idx == EXP_CLS) ? "PASS" : "FAIL");
         $display("------------------------------------------------------------");
         if (fail_cnt == 0 && pair_done_cnt == 5 && class_idx == EXP_CLS)
@@ -374,39 +389,43 @@ endmodule
 //==============================================================================
 // fc_weight_bram behavioral model
 //   Simple Dual-Port, 256-bit × 1024 (BMG spec depth; 720 entries 사용).
-//   Port A: write only - ENA + WEA 둘 다 결선 필요 (실제 BMG 거동과 일치).
-//   Port B: read with L=1 (Primitive Output Register Disable).
+//   Port A: write only — ENA + WEA 둘 다 결선 필요 (실제 BMG 거동과 일치).
+//   Port B: read with L=2 (Primitive Output Register + REGCEB tie1, engine ties 1).
 //
 //   ★ Vivado 프로젝트에 실제 fc_weight_bram BMG IP 가 있으면 이 module 을
 //     주석 처리하거나 다른 파일로 분리하세요 (duplicate 정의 충돌 방지).
 //==============================================================================
-/*
-module fc_weight_bram (
+module fc_weight_bram (   // SYMMETRIC: Port A 256b write (byte-write, ×1024) / Port B 256b read (720 used)
     input  wire         clka,
     input  wire         ena,
-    input  wire         wea,
+    input  wire [31:0]  wea,                // 256-bit byte-write (AXI WSTRB 직결)
     input  wire [9:0]   addra,
     input  wire [255:0] dina,
 
     input  wire         clkb,
     input  wire         enb,
     input  wire [9:0]   addrb,
-    output reg  [255:0] doutb
+    output reg  [255:0] doutb,
+    input  wire         regceb              // 출력 reg CE — engine 이 1'b1 결선 (always-follow)
 );
     reg [255:0] mem [0:1023];
+    reg [255:0] doutb_i;
 
-    integer mi;
+    integer mi, b;
     initial begin
         for (mi = 0; mi < 1024; mi = mi + 1) mem[mi] = 256'd0;
-        doutb = 256'd0;
+        doutb_i = 256'd0; doutb = 256'd0;
     end
 
     always @(posedge clka) begin
-        if (ena && wea) mem[addra] <= dina;
+        if (ena)
+            for (b = 0; b < 32; b = b + 1)
+                if (wea[b]) mem[addra][b*8 +: 8] <= dina[b*8 +: 8];
     end
 
+    // L=2: core read register (ENB) + output register (REGCEB gated, engine ties 1)
     always @(posedge clkb) begin
-        if (enb) doutb <= mem[addrb];
+        if (enb)    doutb_i <= mem[addrb];  // core: ENB gated
+        if (regceb) doutb   <= doutb_i;     // output reg: REGCEB gated (engine ties 1)
     end
 endmodule
-*/

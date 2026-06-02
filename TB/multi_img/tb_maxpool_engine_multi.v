@@ -23,8 +23,13 @@
 //     all_c2pool.hex  (100 × 576 lines × 128-bit packed)
 //////////////////////////////////////////////////////////////////////////////////
 
-`define ALL_C2POOL_HEX   "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_c2pool.hex"
-`define ALL_MAXPOOL_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_maxpool.hex"
+`ifdef __ICARUS__
+  `define ALL_C2POOL_HEX   "data/multi_img/all_c2pool.hex"
+  `define ALL_MAXPOOL_HEX  "data/multi_img/all_maxpool.hex"
+`else
+  `define ALL_C2POOL_HEX   "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_c2pool.hex"
+  `define ALL_MAXPOOL_HEX  "C:/Users/gimdohyeon/CNN_Accelerator_Core/CNN_Accelerator_Core_data/image_by_image/multi_img/all_maxpool.hex"
+`endif
 
 
 module tb_maxpool_engine_multi;
@@ -100,7 +105,8 @@ module tb_maxpool_engine_multi;
         .clkb  (clk),
         .enb   (c2pool_rd_en),
         .addrb (c2pool_rd_addr),                 // maxpool 이 physical addr 직접 출력 (11-bit)
-        .doutb (c2pool_rd_data)
+        .doutb (c2pool_rd_data),
+        .regceb (1'b1)                           // 출력 reg always-follow (마지막 read p11 전파)
     );
 
     //==========================================================================

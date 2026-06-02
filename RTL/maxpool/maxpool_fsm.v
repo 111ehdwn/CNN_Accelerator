@@ -9,12 +9,12 @@ module maxpool_fsm (
     // 4-way handshake (conv2_fsm 패턴 차용)
     //   prior_diff = (rdone count) - (prior_wdone count) ; data_ready = (prior_diff < 0)
     //   after_diff = (wdone count) - (succ_rdone count)  ; output_avail = (after_diff < 2)
-    input  wire         prior_wdone,      // c2pool buffer (Conv2 wdone) - 입력 image 준비됨
-    input  wire         succ_rdone,       // poolfc buffer (FC rdone) - 출력 bank 비움
+    input  wire         prior_wdone,      // c2pool buffer (Conv2 wdone) — 입력 image 준비됨
+    input  wire         succ_rdone,       // poolfc buffer (FC rdone) — 출력 bank 비움
     output reg          rdone,            // c2pool read 완료 (= done, P0 단순 매핑)
     output reg          wdone,            // poolfc write 완료 (= done, P0 단순 매핑)
 
-    // Bank select (conv2_fsm 패턴 - maxpool 내부 관리, engine 이 addr 에 prepend)
+    // Bank select (conv2_fsm 패턴 — maxpool 내부 관리, engine 이 addr 에 prepend)
     output reg          input_bank_sel,   // c2pool read bank  : rdone 시 toggle
     output reg          output_bank_sel,  // poolfc write bank : wdone 시 toggle
 
@@ -42,7 +42,7 @@ module maxpool_fsm (
     reg [1:0] state;
     reg [3:0] out_row;
     reg [3:0] out_col;
-    reg [2:0] phase;      // 0~5: BRAM 1-cycle latency 고려
+    reg [2:0] phase;      // 0~6: c2pool BRAM L=2 (2-cycle) latency 고려
     reg [2:0] flush_cnt;
     reg [7:0] cur_addr_reg;
 
@@ -84,7 +84,7 @@ module maxpool_fsm (
     wire [4:0] in_row = out_row << 1;
     wire [4:0] in_col = out_col << 1;
 
-    // local addr (0~575) - 10-bit. bank offset 제거됨 (buffer 가 prepend).
+    // local addr (0~575) — 10-bit. bank offset 제거됨 (buffer 가 prepend).
     wire [9:0] in_row_10 = {5'd0, in_row};
     wire [9:0] in_col_10 = {5'd0, in_col};
 
@@ -125,7 +125,7 @@ module maxpool_fsm (
                     flush_cnt <= 3'd0;
 
                     // RUN 진입 조건: 입력 image 준비 + 출력 bank 여유.
-                    //   data_ready   = (prior_diff_next < 0) - 다음 cycle 의 prior_diff 값 기준
+                    //   data_ready   = (prior_diff_next < 0) — 다음 cycle 의 prior_diff 값 기준
                     //   output_avail = (after_diff_next < 2)
                     //   start_pulse  = system init 시 첫 image 강제 진입용 (legacy)
                     if ((data_ready && output_avail) || start_pulse) begin
@@ -139,7 +139,9 @@ module maxpool_fsm (
                         // phase 0
                         // request p00
                         // 이 클럭에서 주소만 요청한다.
-                        // 동기식 BRAM이므로 rd_data는 아직 유효하지 않다.
+                        // c2pool BRAM 은 L=2 (core reg + output reg) 이므로
+                        // 발행한 주소의 데이터는 2 cycle 뒤에 doutb 로 도착한다.
+                        // (rd_addr 1-cycle latch + BRAM L=2 → capture 는 발행 +3 phase)
                         //======================================================
                         3'd0: begin
                             rd_en   <= 1'b1;
@@ -150,9 +152,6 @@ module maxpool_fsm (
                         //======================================================
                         // phase 1
                         // request p01
-                        // 이 시점에서 BRAM은 p00을 출력 준비하지만,
-                        // 같은 posedge에서 FSM이 잡으면 이전 rd_data를 보게 된다.
-                        // 따라서 여기서는 캡처하지 않고 다음 phase에서 p00을 잡는다.
                         //======================================================
                         3'd1: begin
                             rd_en   <= 1'b1;
@@ -162,27 +161,25 @@ module maxpool_fsm (
 
                         //======================================================
                         // phase 2
-                        // capture p00, request p10
+                        // request p10
+                        // L=2 이므로 p00 은 아직 도착 전 → 캡처 없음.
                         //======================================================
                         3'd2: begin
                             rd_en   <= 1'b1;
-
-                            for (j = 0; j < 16; j = j + 1)
-                                p00_flat[j*8 +: 8] <= rd_data[j*8 +: 8];
-
                             rd_addr <= ((in_row_10 + 10'd1) * 10'd24) + in_col_10;
                             phase   <= 3'd3;
                         end
 
                         //======================================================
                         // phase 3
-                        // capture p01, request p11
+                        // request p11, capture p00
+                        // L=2: 이 cycle 의 doutb = mem[p00 addr] (phase 0 발행분).
                         //======================================================
                         3'd3: begin
                             rd_en   <= 1'b1;
 
                             for (j = 0; j < 16; j = j + 1)
-                                p01_flat[j*8 +: 8] <= rd_data[j*8 +: 8];
+                                p00_flat[j*8 +: 8] <= rd_data[j*8 +: 8];
 
                             rd_addr <= ((in_row_10 + 10'd1) * 10'd24) + (in_col_10 + 10'd1);
                             phase   <= 3'd4;
@@ -190,24 +187,38 @@ module maxpool_fsm (
 
                         //======================================================
                         // phase 4
-                        // capture p10
-                        // p11은 이 클럭에서 BRAM 쪽에서 출력 준비되므로,
-                        // 다음 phase에서 캡처해야 한다.
+                        // capture p01
+                        // 마지막 read 주소 (p11) 는 phase 3 에서 발행됨. 이후
+                        // rd_en=0 이어도 c2pool 의 output reg 가 REGCEB=1 (항상
+                        // enable) 이라 p11 이 doutb 까지 정상 전파된다.
                         //======================================================
                         3'd4: begin
                             rd_en <= 1'b0;
 
                             for (j = 0; j < 16; j = j + 1)
-                                p10_flat[j*8 +: 8] <= rd_data[j*8 +: 8];
+                                p01_flat[j*8 +: 8] <= rd_data[j*8 +: 8];
 
                             phase <= 3'd5;
                         end
 
                         //======================================================
                         // phase 5
-                        // capture p11, start compare, advance output pixel
+                        // capture p10
                         //======================================================
                         3'd5: begin
+                            rd_en <= 1'b0;
+
+                            for (j = 0; j < 16; j = j + 1)
+                                p10_flat[j*8 +: 8] <= rd_data[j*8 +: 8];
+
+                            phase <= 3'd6;
+                        end
+
+                        //======================================================
+                        // phase 6
+                        // capture p11, start compare, advance output pixel
+                        //======================================================
+                        3'd6: begin
                             rd_en <= 1'b0;
 
                             for (j = 0; j < 16; j = j + 1)
@@ -287,7 +298,7 @@ module maxpool_fsm (
     end
 
     //=========================================================================
-    // Bank select toggle FF (conv2_fsm 패턴 - maxpool 내부 관리)
+    // Bank select toggle FF (conv2_fsm 패턴 — maxpool 내부 관리)
     //   input_bank_sel  : c2pool read bank, rdone 시 toggle
     //   output_bank_sel : poolfc write bank, wdone 시 toggle
     //
