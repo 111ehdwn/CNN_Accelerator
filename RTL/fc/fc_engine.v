@@ -15,7 +15,7 @@
 //   Input BRAM (poolfc):
 //     width = 128-bit = 16ch * 8-bit
 //     depth = 512 = 2 bank * 256 (144 만 유효, 나머지 padding)
-//     addr  = {input_bank_sel, s_cnt[7:0]}   — maxpool 의 write 포맷과 일치
+//     addr  = {input_bank_sel, s_cnt[7:0]}   - maxpool 의 write 포맷과 일치
 //     one address contains all 16 channels for the same spatial position
 //
 //   Weight BRAM:
@@ -49,7 +49,7 @@ module fc_engine #(
     //==========================================================================
     // poolfc buffer read port
     //   128-bit × 512 (2 bank × 256), 2-cycle read latency (L=2, bram_pool_to_fc).
-    //   addr = {input_bank_sel, s_cnt[7:0]} — bank=0: 0..143, bank=1: 256..399.
+    //   addr = {input_bank_sel, s_cnt[7:0]} - bank=0: 0..143, bank=1: 256..399.
     //==========================================================================
     output wire         poolfc_re,
     output wire [8:0]   poolfc_addr,         // {input_bank_sel, s_cnt[7:0]}
@@ -99,7 +99,7 @@ module fc_engine #(
     //==========================================================================
     // 2. Input BRAM address (poolfc)
     //
-    //   Bank format: {bank_sel, s_cnt[7:0]} — 9-bit, top bit = bank.
+    //   Bank format: {bank_sel, s_cnt[7:0]} - 9-bit, top bit = bank.
     //     bank=0 : addr {0, 0}..{0, 143} = 0..143
     //     bank=1 : addr {1, 0}..{1, 143} = 256..399
     //
@@ -134,7 +134,7 @@ module fc_engine #(
     //   weight BRAM 을 poolfc 와 동일하게 L=2 (BMG output primitive register) 로 두어
     //   weight(fcw_doutb) 와 x(poolfc_dout) 가 둘 다 T+2 에 도착하도록 정렬한다.
     //   (구: fc_weight_bram L=1 + fabric reg fcw_doutb_r 로 +1 했으나, IP output reg 로
-    //    통일 — conv weight BMG 와 동일 방식. REGCEB=1 로 마지막 weight(pair4 sp143) propagation
+    //    통일 - conv weight BMG 와 동일 방식. REGCEB=1 로 마지막 weight(pair4 sp143) propagation
     //    보장. abrupt-stop(comp_v drop) 에서 REGCEB 미노출이면 ENB-gated → 누락; 그래서 tie1.)
     //   L=2 output register 는 300MHz weight read 타이밍도 닫는다 (clock-to-out ~0.45ns).
 
@@ -150,16 +150,16 @@ module fc_engine #(
     // PE 는 공용 core/pe_cell (DSP 3-stage + 출력 reg = 4-cycle latency).
     // Timeline for an issued spatial word at cycle T
     //   (poolfc L=2 & weight L=2: 둘 다 BMG output primitive register → T+2 도착):
-    //   T+2 : x(poolfc_dout) & weight(fcw_doutb) valid — PE inputs valid (combinational)
-    //   T+3 : DSP A/B latch              — pe_en @ T+2 = 1 필요
-    //   T+4 : DSP M latch                — pe_en @ T+3 = 1 필요
-    //   T+5 : DSP P latch                — pe_en @ T+4 = 1 필요
-    //   T+6 : PE 출력 reg (mul0/mul1)    — pe_en @ T+5 = 1 필요
-    //   T+7 : adder stage1 reg (e1)      — adder_en @ T+6 = 1 필요
+    //   T+2 : x(poolfc_dout) & weight(fcw_doutb) valid - PE inputs valid (combinational)
+    //   T+3 : DSP A/B latch              - pe_en @ T+2 = 1 필요
+    //   T+4 : DSP M latch                - pe_en @ T+3 = 1 필요
+    //   T+5 : DSP P latch                - pe_en @ T+4 = 1 필요
+    //   T+6 : PE 출력 reg (mul0/mul1)    - pe_en @ T+5 = 1 필요
+    //   T+7 : adder stage1 reg (e1)      - adder_en @ T+6 = 1 필요
     //   T+8 : adder stage2 reg (e2)
     //   T+9 : adder stage3 reg (e3)
-    //   T+10: adder stage4 reg (sum0/1)  — adder_en @ T+9 = 1 필요
-    //   T+11: accumulator update         — acc_en @ T+10 = 1 필요
+    //   T+10: adder stage4 reg (sum0/1)  - adder_en @ T+9 = 1 필요
+    //   T+11: accumulator update         - acc_en @ T+10 = 1 필요
     //
     // comp_pipe[k] @ cycle C = fsm_comp_v @ cycle (C-k-1) (1-cycle 등록 지연부터).
     // poolfc 출력 register(L=2)로 데이터가 기존 L=1 대비 +1 늦으므로 모든 tap +1 시프트:

@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
 // Description:
-//   FC argmax — pipelined tournament tree (300MHz timing 대응).
+//   FC argmax - pipelined tournament tree (300MHz timing 대응).
 //
 //   [설계 의도]
 //     기존 1-cycle combinational 10-way 비교는 24-bit 비교기 9단이 직렬로 풀려
