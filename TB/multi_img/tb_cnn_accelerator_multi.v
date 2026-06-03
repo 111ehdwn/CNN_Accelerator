@@ -90,6 +90,7 @@ module tb_cnn_accelerator_multi;
     //==========================================================================
     cnn_accelerator dut (
         .clk       (clk),
+        .aclk      (clk),               // 단일클럭 TB: aclk=clk → CDC 동기화기는 동작(지연만), 기능 동일
         .resetn    (resetn),
         .enable    (enable),
         .start     (start),
