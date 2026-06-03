@@ -24,7 +24,7 @@
 //     COMPUTE_HOLD     : compute, window 정지 (2 cycle, kw 0/1)
 //     COMPUTE_ADVANCE  : compute, window 1 col 진행 (1 cycle, kw 2)
 //     COMPUTE_WRAP     : compute, row 변경 처리 (3 cycle, r=0..22 만)
-//     DRAIN            : 마지막 ADV 후 pipeline drain (12 cycle), 그 후 DONE
+//     DRAIN            : 마지막 ADV 후 pipeline drain (12 + PE_BC_DELAY cycle), 그 후 DONE
 //
 //   카운터 의미:
 //     (row_cnt, col_cnt) = "현재 cycle에 BRAM에 emit 하는 read addr 좌표"
@@ -57,7 +57,7 @@
 //       wrap_cnt == 2 (3 cycle 완료)
 //
 //     DRAIN → DONE:
-//       drain_cnt == 11 (12 cycle pipeline drain 완료)
+//       drain_cnt == DRAIN_LAST (= 11 + PE_BC_DELAY; 12+N cycle pipeline drain 완료)
 //       이 edge 에 모든 카운터 (row_cnt, col_cnt, drain_cnt, output_pixel_cnt) reset
 //
 //   output_pixel_cnt (10-bit, 0..576):
@@ -85,7 +85,11 @@
 //     output_bank_sel toggle on wdone
 //////////////////////////////////////////////////////////////////////////////////
 
-module conv2_fsm (
+module conv2_fsm #(
+    // ★300MHz Step 2: conv2_engine 의 PE_BC_DELAY 와 동일 N.
+    //   PE 입력 broadcast 를 +N register 지연하면 datapath drain 도 +N → DRAIN 연장.
+    parameter PE_BC_DELAY = 0
+) (
     input  wire        clk,
     input  wire        rst,              // active-high synchronous reset
 
@@ -146,7 +150,13 @@ module conv2_fsm (
     localparam [2:0] COMPUTE_WRAP     = 3'd6;
     localparam [2:0] DRAIN            = 3'd7;
 
-    reg [2:0] state;
+    (* max_fanout = 32 *) reg [2:0] state;   // ★300MHz: 192 PE broadcast → 복제(replication)로 route 단축
+
+    // ★300MHz Step 2: DRAIN 종료 카운트 = 11 + PE_BC_DELAY.
+    //   PE 입력 +N register 로 (PE input → c2pool mem update) 파이프라인이 12→(12+N)
+    //   cycle 이 되므로, 마지막 write 가 output_pixel_cnt/write_addr reset 전에 끝나도록
+    //   DRAIN 을 N cycle 연장. drain_cnt 5-bit(0~31) → N ≤ 20 (overflow-safe).
+    localparam [4:0] DRAIN_LAST = 5'd11 + PE_BC_DELAY;
 
     //==========================================================================
     // 2. 내부 phase 카운터
@@ -154,9 +164,9 @@ module conv2_fsm (
     //   output_pixel_cnt 는 port 로 선언됨 (datapath 공유). 본 모듈 안에서는 일반
     //   reg 처럼 사용.
     //==========================================================================
-    reg [1:0] kw_cnt;             // 0~2 (한 output pixel의 K_col index)
+    (* max_fanout = 32 *) reg [1:0] kw_cnt;  // 0~2; sel=kw_cnt → 192 PE broadcast (★300MHz replication)
     reg [1:0] wrap_cnt;           // 0~2 (COMPUTE_WRAP 내부 cycle 카운터)
-    reg [3:0] drain_cnt;          // 0~11 (DRAIN 내부 cycle 카운터, pipeline depth=12)
+    reg [4:0] drain_cnt;          // 0~DRAIN_LAST(=11+N); DRAIN 길이 = 12+N cycle (pipeline depth)
 
     //==========================================================================
     // 3. Handshake 차이 카운터 (signed 3-bit) — race-free combinational next value
@@ -201,7 +211,7 @@ module conv2_fsm (
             state      <= IDLE;
             kw_cnt     <= 2'd0;
             wrap_cnt   <= 2'd0;
-            drain_cnt  <= 4'd0;
+            drain_cnt  <= 5'd0;
         end else begin
             case (state)
                 //------------------------------------------------------------------
@@ -294,18 +304,19 @@ module conv2_fsm (
                 end
 
                 //------------------------------------------------------------------
-                // DRAIN: pipeline drain (12 cycle, 마지막 ADV 후)
-                //   PE 4 + adder_tree 5 + kcol_acc 1 + truncate_relu 1 + c2pool 1 = 12.
-                //   drain_cnt 0..11, drain_cnt==11 cycle 의 edge 에 마지막 c2pool
-                //   write 가 mem 에 갱신되고 동시에 DONE 진입.
+                // DRAIN: pipeline drain (12 + PE_BC_DELAY cycle, 마지막 ADV 후)
+                //   PE 4 + adder_tree 5 + kcol_acc 1 + truncate_relu 1 + c2pool 1 = 12
+                //   (+ Step2 PE_BC_DELAY=N → 12+N). drain_cnt 0..DRAIN_LAST(=11+N),
+                //   drain_cnt==DRAIN_LAST cycle 의 edge 에 마지막 c2pool write 가 mem 에
+                //   갱신되고 동시에 DONE 진입.
                 //   이 edge 에서 row_cnt/col_cnt/output_pixel_cnt 도 reset (다음 image).
                 //------------------------------------------------------------------
                 DRAIN: begin
-                    if (drain_cnt == 4'd11) begin
+                    if (drain_cnt == DRAIN_LAST) begin
                         state     <= DONE;
-                        drain_cnt <= 4'd0;
+                        drain_cnt <= 5'd0;
                     end else begin
-                        drain_cnt <= drain_cnt + 4'd1;
+                        drain_cnt <= drain_cnt + 5'd1;
                     end
                 end
 
@@ -319,7 +330,7 @@ module conv2_fsm (
     //
     //   shift_en=1 cycle 의 edge 에서 nested counter 증가.
     //   단, (25, 25) 에서는 cap (BRAM ping-pong 영역 밖 access 방지).
-    //   DRAIN 종료 edge (drain_cnt==11) 에 (0, 0) 으로 reset (다음 image 위해).
+    //   DRAIN 종료 edge (drain_cnt==DRAIN_LAST) 에 (0, 0) 으로 reset (다음 image 위해).
     //
     //   shift_en 은 datapath control 출력 (combinational, state로부터):
     //     PIPELINE_FILL, COMPUTE_ADVANCE, COMPUTE_WRAP에서 shift_en=1
@@ -329,7 +340,7 @@ module conv2_fsm (
         if (rst) begin
             row_cnt <= 5'd0;
             col_cnt <= 5'd0;
-        end else if (state == DRAIN && drain_cnt == 4'd11) begin
+        end else if (state == DRAIN && drain_cnt == DRAIN_LAST) begin
             // DRAIN 종료: 다음 image 위해 reset
             row_cnt <= 5'd0;
             col_cnt <= 5'd0;
@@ -360,7 +371,7 @@ module conv2_fsm (
     always @(posedge clk) begin
         if (rst) begin
             output_pixel_cnt <= 10'd0;
-        end else if (state == DRAIN && drain_cnt == 4'd11) begin
+        end else if (state == DRAIN && drain_cnt == DRAIN_LAST) begin
             // DRAIN 종료: 다음 image 위해 reset
             output_pixel_cnt <= 10'd0;
         end else if (state == COMPUTE_ADVANCE) begin

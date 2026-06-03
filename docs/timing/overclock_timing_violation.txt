@@ -1,0 +1,527 @@
+report_clock_interaction -delay_type max -significant_digits 3
+INFO: [Timing 38-91] UpdateTimingParams: Speed grade: -1, Delay Type: max.
+INFO: [Timing 38-191] Multithreading enabled for timing update using a maximum of 2 CPUs
+WARNING: [Timing 38-164] This design has multiple clocks. Inter clock paths are considered valid unless explicitly excluded by timing constraints such as set_clock_groups or set_false_path.
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2024 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2024.1 (win64) Build 5076996 Wed May 22 18:37:14 MDT 2024
+| Date         : Wed Jun  3 22:26:03 2026
+| Host         : DOHYUNKIM266E running 64-bit major release  (build 9200)
+| Command      : report_clock_interaction -delay_type max -significant_digits 3
+| Design       : cnn_accelerator_system_wrapper
+| Device       : 7a100t-csg324
+| Speed File   : -1  PRODUCTION 1.23 2018-06-13
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Clock Interaction Report
+
+Clock Interaction Table
+-----------------------
+
+                                                                                                                                                                                                                                                                                                                      WNS                                TNS Failing  TNS Total    WNS Path         Clock-Pair           Inter-Clock              
+From Clock                                                                                                                                                 To Clock                                                                                                                                                   Clock Edges  WNS(ns)      TNS(ns)    Endpoints    Endpoints  Requirement(ns)  Classification       Constraints              
+---------------------------------------------------------------------------------------------------------------------------------------------------------  ---------------------------------------------------------------------------------------------------------------------------------------------------------  -----------  -------  -----------  -----------  -----------  ---------------  -------------------  -----------------------  
+clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                rise - rise   -0.043       -0.252            8        25950           10.000  Clean                Partial False Path       
+clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                clk_out3_cnn_accelerator_system_clk_wiz_0_0                                                                                                                rise - rise    0.107        0.000            0          893           10.000  Clean                Timed                    
+clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                clk_pll_i                                                                                                                                                  rise - rise    8.411        0.000            0          259           10.000  Ignored              Max Delay Datapath Only  
+clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/DRCK                                                                                                                                  0           46                   Ignored              Asynchronous Groups      
+clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/UPDATE                                                                                                                                0            6                   Ignored              Asynchronous Groups      
+clk_out2_cnn_accelerator_system_clk_wiz_0_0                                                                                                                clk_out2_cnn_accelerator_system_clk_wiz_0_0                                                                                                                rise - rise    1.620        0.000            0          126            5.000  Clean                Timed                    
+clk_out2_cnn_accelerator_system_clk_wiz_0_0                                                                                                                clk_pll_i                                                                                                                                                  rise - rise   16.850        0.000            0           12           20.000  Clean                Timed                    
+clk_out3_cnn_accelerator_system_clk_wiz_0_0                                                                                                                clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                                                             0            2                   Ignored              False Path               
+clk_out3_cnn_accelerator_system_clk_wiz_0_0                                                                                                                clk_out3_cnn_accelerator_system_clk_wiz_0_0                                                                                                                rise - rise   -2.990  -153865.396       110302       133858            3.333  Clean                Timed                    
+clk_pll_i                                                                                                                                                  clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                rise - rise   10.790        0.000            0          172           12.308  Ignored              Max Delay Datapath Only  
+clk_pll_i                                                                                                                                                  clk_out2_cnn_accelerator_system_clk_wiz_0_0                                                                                                                rise - rise   10.372        0.000            0            1           20.000  Ignored              Max Delay Datapath Only  
+clk_pll_i                                                                                                                                                  clk_pll_i                                                                                                                                                  rise - rise    0.969        0.000            0        14783           12.308  Clean                Partial False Path       
+clk_pll_i                                                                                                                                                  u_memc_ui_top_axi/mem_intfc0/ddr_phy_top0/u_ddr_mc_phy_wrapper/u_ddr_mc_phy/ddr_phy_4lanes_0.u_ddr_phy_4lanes/ddr_byte_lane_C.ddr_byte_lane_C/iserdes_clk  rise - fall   10.942        0.000            0            8           16.923  Clean                Timed                    
+clk_pll_i                                                                                                                                                  u_memc_ui_top_axi/mem_intfc0/ddr_phy_top0/u_ddr_mc_phy_wrapper/u_ddr_mc_phy/ddr_phy_4lanes_0.u_ddr_phy_4lanes/ddr_byte_lane_D.ddr_byte_lane_D/iserdes_clk  rise - fall    9.249        0.000            0            8           16.923  Clean                Timed                    
+cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/DRCK                                                                                     clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                                                             0           92                   Ignored              Asynchronous Groups      
+cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/DRCK                                                                                     cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/DRCK                                                                                     fall - rise   12.956        0.000            0          222           16.667  Clean                Timed                    
+cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/DRCK                                                                                     cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/UPDATE                                                                                                                                0           44                   Ignored              Exclusive Groups         
+cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/UPDATE                                                                                   clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                                                             0           17                   Ignored              Asynchronous Groups      
+cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/UPDATE                                                                                   cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/DRCK                                                                                                                                  0           82                   Ignored              Exclusive Groups         
+cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/UPDATE                                                                                   cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/UPDATE                                                                                   fall - rise   10.288        0.000            0           46           16.667  Clean                Timed                    
+iserdes_clkdiv                                                                                                                                             iserdes_clkdiv                                                                                                                                             rise - rise   10.281        0.000            0           33           12.308  Clean                Timed                    
+iserdes_clkdiv_1                                                                                                                                           iserdes_clkdiv_1                                                                                                                                           rise - rise   10.264        0.000            0           33           12.308  Clean                Timed                    
+mem_refclk                                                                                                                                                 clk_pll_i                                                                                                                                                                                               0            2                   Ignored              False Path               
+mem_refclk                                                                                                                                                 mem_refclk                                                                                                                                                 rise - rise    1.917        0.000            0            1            3.077  Clean                Timed                    
+oserdes_clk                                                                                                                                                oserdes_clkdiv                                                                                                                                             rise - rise    2.180        0.000            0           12            3.077  Clean                Timed                    
+oserdes_clk_1                                                                                                                                              oserdes_clkdiv_1                                                                                                                                           rise - rise    2.180        0.000            0           13            3.077  Clean                Timed                    
+oserdes_clk_2                                                                                                                                              oserdes_clk_2                                                                                                                                              rise - rise    1.499        0.000            0            4            3.077  Clean                Timed                    
+oserdes_clk_2                                                                                                                                              oserdes_clkdiv_2                                                                                                                                           rise - rise    2.180        0.000            0           15            3.077  Clean                Timed                    
+oserdes_clk_3                                                                                                                                              oserdes_clk_3                                                                                                                                              rise - rise    1.515        0.000            0            4            3.077  Clean                Timed                    
+oserdes_clk_3                                                                                                                                              oserdes_clkdiv_3                                                                                                                                           rise - rise    2.180        0.000            0           15            3.077  Clean                Timed                    
+oserdes_clkdiv                                                                                                                                             oserdes_clkdiv                                                                                                                                             rise - rise   10.357        0.000            0           44           12.308  Clean                Timed                    
+oserdes_clkdiv_1                                                                                                                                           oserdes_clkdiv_1                                                                                                                                           rise - rise   10.881        0.000            0           48           12.308  Clean                Timed                    
+oserdes_clkdiv_2                                                                                                                                           oserdes_clkdiv_2                                                                                                                                           rise - rise    4.734        0.000            0           36            6.154  Clean                Timed                    
+oserdes_clkdiv_3                                                                                                                                           oserdes_clkdiv_3                                                                                                                                           rise - rise    4.750        0.000            0           36            6.154  Clean                Timed                    
+sync_pulse                                                                                                                                                 mem_refclk                                                                                                                                                 rise - rise    1.316        0.000            0            1            1.731  Clean                Timed                    
+
+
+report_clock_interaction: Time (s): cpu = 00:00:25 ; elapsed = 00:00:15 . Memory (MB): peak = 7405.387 ; gain = 441.961
+report_clock_interaction -delay_type max -significant_digits 3
+INFO: [Timing 38-91] UpdateTimingParams: Speed grade: -1, Delay Type: max.
+INFO: [Timing 38-191] Multithreading enabled for timing update using a maximum of 2 CPUs
+WARNING: [Timing 38-164] This design has multiple clocks. Inter clock paths are considered valid unless explicitly excluded by timing constraints such as set_clock_groups or set_false_path.
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2024 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2024.1 (win64) Build 5076996 Wed May 22 18:37:14 MDT 2024
+| Date         : Wed Jun  3 22:26:22 2026
+| Host         : DOHYUNKIM266E running 64-bit major release  (build 9200)
+| Command      : report_clock_interaction -delay_type max -significant_digits 3
+| Design       : cnn_accelerator_system_wrapper
+| Device       : 7a100t-csg324
+| Speed File   : -1  PRODUCTION 1.23 2018-06-13
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Clock Interaction Report
+
+Clock Interaction Table
+-----------------------
+
+                                                                                                                                                                                                                                                                                                                      WNS                                TNS Failing  TNS Total    WNS Path         Clock-Pair           Inter-Clock              
+From Clock                                                                                                                                                 To Clock                                                                                                                                                   Clock Edges  WNS(ns)      TNS(ns)    Endpoints    Endpoints  Requirement(ns)  Classification       Constraints              
+---------------------------------------------------------------------------------------------------------------------------------------------------------  ---------------------------------------------------------------------------------------------------------------------------------------------------------  -----------  -------  -----------  -----------  -----------  ---------------  -------------------  -----------------------  
+clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                rise - rise   -0.043       -0.252            8        25950           10.000  Clean                Partial False Path       
+clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                clk_out3_cnn_accelerator_system_clk_wiz_0_0                                                                                                                rise - rise    0.107        0.000            0          893           10.000  Clean                Timed                    
+clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                clk_pll_i                                                                                                                                                  rise - rise    8.411        0.000            0          259           10.000  Ignored              Max Delay Datapath Only  
+clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/DRCK                                                                                                                                  0           46                   Ignored              Asynchronous Groups      
+clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/UPDATE                                                                                                                                0            6                   Ignored              Asynchronous Groups      
+clk_out2_cnn_accelerator_system_clk_wiz_0_0                                                                                                                clk_out2_cnn_accelerator_system_clk_wiz_0_0                                                                                                                rise - rise    1.620        0.000            0          126            5.000  Clean                Timed                    
+clk_out2_cnn_accelerator_system_clk_wiz_0_0                                                                                                                clk_pll_i                                                                                                                                                  rise - rise   16.850        0.000            0           12           20.000  Clean                Timed                    
+clk_out3_cnn_accelerator_system_clk_wiz_0_0                                                                                                                clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                                                             0            2                   Ignored              False Path               
+clk_out3_cnn_accelerator_system_clk_wiz_0_0                                                                                                                clk_out3_cnn_accelerator_system_clk_wiz_0_0                                                                                                                rise - rise   -2.990  -153865.403       110302       133858            3.333  Clean                Timed                    
+clk_pll_i                                                                                                                                                  clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                rise - rise   10.790        0.000            0          172           12.308  Ignored              Max Delay Datapath Only  
+clk_pll_i                                                                                                                                                  clk_out2_cnn_accelerator_system_clk_wiz_0_0                                                                                                                rise - rise   10.372        0.000            0            1           20.000  Ignored              Max Delay Datapath Only  
+clk_pll_i                                                                                                                                                  clk_pll_i                                                                                                                                                  rise - rise    0.969        0.000            0        14783           12.308  Clean                Partial False Path       
+clk_pll_i                                                                                                                                                  u_memc_ui_top_axi/mem_intfc0/ddr_phy_top0/u_ddr_mc_phy_wrapper/u_ddr_mc_phy/ddr_phy_4lanes_0.u_ddr_phy_4lanes/ddr_byte_lane_C.ddr_byte_lane_C/iserdes_clk  rise - fall   10.942        0.000            0            8           16.923  Clean                Timed                    
+clk_pll_i                                                                                                                                                  u_memc_ui_top_axi/mem_intfc0/ddr_phy_top0/u_ddr_mc_phy_wrapper/u_ddr_mc_phy/ddr_phy_4lanes_0.u_ddr_phy_4lanes/ddr_byte_lane_D.ddr_byte_lane_D/iserdes_clk  rise - fall    9.249        0.000            0            8           16.923  Clean                Timed                    
+cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/DRCK                                                                                     clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                                                             0           92                   Ignored              Asynchronous Groups      
+cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/DRCK                                                                                     cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/DRCK                                                                                     fall - rise   12.956        0.000            0          222           16.667  Clean                Timed                    
+cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/DRCK                                                                                     cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/UPDATE                                                                                                                                0           44                   Ignored              Exclusive Groups         
+cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/UPDATE                                                                                   clk_out1_cnn_accelerator_system_clk_wiz_0_0                                                                                                                                                             0           17                   Ignored              Asynchronous Groups      
+cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/UPDATE                                                                                   cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/DRCK                                                                                                                                  0           82                   Ignored              Exclusive Groups         
+cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/UPDATE                                                                                   cnn_accelerator_system_i/mdm_1/U0/Use_E2.BSCAN_I/Use_E2.BSCANE2_I/UPDATE                                                                                   fall - rise   10.288        0.000            0           46           16.667  Clean                Timed                    
+iserdes_clkdiv                                                                                                                                             iserdes_clkdiv                                                                                                                                             rise - rise   10.281        0.000            0           33           12.308  Clean                Timed                    
+iserdes_clkdiv_1                                                                                                                                           iserdes_clkdiv_1                                                                                                                                           rise - rise   10.264        0.000            0           33           12.308  Clean                Timed                    
+mem_refclk                                                                                                                                                 clk_pll_i                                                                                                                                                                                               0            2                   Ignored              False Path               
+mem_refclk                                                                                                                                                 mem_refclk                                                                                                                                                 rise - rise    1.917        0.000            0            1            3.077  Clean                Timed                    
+oserdes_clk                                                                                                                                                oserdes_clkdiv                                                                                                                                             rise - rise    2.180        0.000            0           12            3.077  Clean                Timed                    
+oserdes_clk_1                                                                                                                                              oserdes_clkdiv_1                                                                                                                                           rise - rise    2.180        0.000            0           13            3.077  Clean                Timed                    
+oserdes_clk_2                                                                                                                                              oserdes_clk_2                                                                                                                                              rise - rise    1.499        0.000            0            4            3.077  Clean                Timed                    
+oserdes_clk_2                                                                                                                                              oserdes_clkdiv_2                                                                                                                                           rise - rise    2.180        0.000            0           15            3.077  Clean                Timed                    
+oserdes_clk_3                                                                                                                                              oserdes_clk_3                                                                                                                                              rise - rise    1.515        0.000            0            4            3.077  Clean                Timed                    
+oserdes_clk_3                                                                                                                                              oserdes_clkdiv_3                                                                                                                                           rise - rise    2.180        0.000            0           15            3.077  Clean                Timed                    
+oserdes_clkdiv                                                                                                                                             oserdes_clkdiv                                                                                                                                             rise - rise   10.357        0.000            0           44           12.308  Clean                Timed                    
+oserdes_clkdiv_1                                                                                                                                           oserdes_clkdiv_1                                                                                                                                           rise - rise   10.881        0.000            0           48           12.308  Clean                Timed                    
+oserdes_clkdiv_2                                                                                                                                           oserdes_clkdiv_2                                                                                                                                           rise - rise    4.734        0.000            0           36            6.154  Clean                Timed                    
+oserdes_clkdiv_3                                                                                                                                           oserdes_clkdiv_3                                                                                                                                           rise - rise    4.750        0.000            0           36            6.154  Clean                Timed                    
+sync_pulse                                                                                                                                                 mem_refclk                                                                                                                                                 rise - rise    1.316        0.000            0            1            1.731  Clean                Timed                    
+
+
+report_design_analysis -setup -max_paths 10
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2024 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2024.1 (win64) Build 5076996 Wed May 22 18:37:14 MDT 2024
+| Date         : Wed Jun  3 22:29:15 2026
+| Host         : DOHYUNKIM266E running 64-bit major release  (build 9200)
+| Command      : report_design_analysis -setup -max_paths 10
+| Design       : cnn_accelerator_system_wrapper
+| Device       : xc7a100t
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Report Design Analysis
+
+Table of Contents
+-----------------
+1. Setup Path Characteristics 1-10
+
+1. Setup Path Characteristics 1-10
+----------------------------------
+
++----------+-------------+------------+-------------+------------+------------+--------+-------------------+--------------------+-------------------+--------------+--------+--------------------------------------------------+---------------------------------------------+---------------------------------------------+-----------+---------------+--------------+------------------+---------------+---------+-------------+------------+------------+---------------------------+-------------------------+-----------------+-------------------------------+
+|   Paths  | Requirement | Path Delay | Logic Delay |  Net Delay | Clock Skew |  Slack | Clock Uncertainty | Clock Relationship | Clock Delay Group | Logic Levels | Routes |                   Logical Path                   |              Start Point Clock              |               End Point Clock               | DSP Block | RAM Registers | IO Crossings | Config Crossings | SLR Crossings | PBlocks | High Fanout | Dont Touch | Mark Debug | Start Point Pin Primitive | End Point Pin Primitive | Start Point Pin |         End Point Pin         |
++----------+-------------+------------+-------------+------------+------------+--------+-------------------+--------------------+-------------------+--------------+--------+--------------------------------------------------+---------------------------------------------+---------------------------------------------+-----------+---------------+--------------+------------------+---------------+---------+-------------+------------+------------+---------------------------+-------------------------+-----------------+-------------------------------+
+| Path #1  | 3.333       | 6.104      | 0.828(14%)  | 5.276(86%) | 0.056      | -2.990 | 0.070             | Safely Timed       | Same Clock        | 3            | 4      | FDRE/C-(12)-LUT4-(16)-LUT6-(3)-LUT3-(25)-FDRE/CE | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | None      | None-None     | 0            | 0                | 0             | 0       | 25          | 0          | 0          | FDRE/C                    | FDRE/CE                 | pe_id_reg[5]/C  | gen_wreg.w_regs_reg[2][15]/CE |
+| Path #2  | 3.333       | 6.104      | 0.828(14%)  | 5.276(86%) | 0.056      | -2.990 | 0.070             | Safely Timed       | Same Clock        | 3            | 4      | FDRE/C-(12)-LUT4-(16)-LUT6-(3)-LUT3-(25)-FDRE/CE | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | None      | None-None     | 0            | 0                | 0             | 0       | 25          | 0          | 0          | FDRE/C                    | FDRE/CE                 | pe_id_reg[5]/C  | gen_wreg.w_regs_reg[2][2]/CE  |
+| Path #3  | 3.333       | 6.104      | 0.828(14%)  | 5.276(86%) | 0.056      | -2.990 | 0.070             | Safely Timed       | Same Clock        | 3            | 4      | FDRE/C-(12)-LUT4-(16)-LUT6-(3)-LUT3-(25)-FDRE/CE | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | None      | None-None     | 0            | 0                | 0             | 0       | 25          | 0          | 0          | FDRE/C                    | FDRE/CE                 | pe_id_reg[5]/C  | gen_wreg.w_regs_reg[2][3]/CE  |
+| Path #4  | 3.333       | 6.104      | 0.828(14%)  | 5.276(86%) | 0.056      | -2.990 | 0.070             | Safely Timed       | Same Clock        | 3            | 4      | FDRE/C-(12)-LUT4-(16)-LUT6-(3)-LUT3-(25)-FDRE/CE | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | None      | None-None     | 0            | 0                | 0             | 0       | 25          | 0          | 0          | FDRE/C                    | FDRE/CE                 | pe_id_reg[5]/C  | gen_wreg.w_regs_reg[2][5]/CE  |
+| Path #5  | 3.333       | 6.104      | 0.828(14%)  | 5.276(86%) | 0.056      | -2.990 | 0.070             | Safely Timed       | Same Clock        | 3            | 4      | FDRE/C-(12)-LUT4-(16)-LUT6-(3)-LUT3-(25)-FDRE/CE | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | None      | None-None     | 0            | 0                | 0             | 0       | 25          | 0          | 0          | FDRE/C                    | FDRE/CE                 | pe_id_reg[5]/C  | gen_wreg.w_regs_reg[2][7]/CE  |
+| Path #6  | 3.333       | 5.881      | 0.828(15%)  | 5.053(85%) | -0.121     | -2.943 | 0.070             | Safely Timed       | Same Clock        | 3            | 4      | FDRE/C-(12)-LUT4-(16)-LUT6-(3)-LUT3-(25)-FDRE/CE | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | None      | None-None     | 0            | 0                | 0             | 0       | 25          | 0          | 0          | FDRE/C                    | FDRE/CE                 | pe_id_reg[5]/C  | gen_wreg.w_regs_reg[2][12]/CE |
+| Path #7  | 3.333       | 5.881      | 0.828(15%)  | 5.053(85%) | -0.121     | -2.943 | 0.070             | Safely Timed       | Same Clock        | 3            | 4      | FDRE/C-(12)-LUT4-(16)-LUT6-(3)-LUT3-(25)-FDRE/CE | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | None      | None-None     | 0            | 0                | 0             | 0       | 25          | 0          | 0          | FDRE/C                    | FDRE/CE                 | pe_id_reg[5]/C  | gen_wreg.w_regs_reg[2][13]/CE |
+| Path #8  | 3.333       | 5.881      | 0.828(15%)  | 5.053(85%) | -0.121     | -2.943 | 0.070             | Safely Timed       | Same Clock        | 3            | 4      | FDRE/C-(12)-LUT4-(16)-LUT6-(3)-LUT3-(25)-FDRE/CE | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | None      | None-None     | 0            | 0                | 0             | 0       | 25          | 0          | 0          | FDRE/C                    | FDRE/CE                 | pe_id_reg[5]/C  | gen_wreg.w_regs_reg[2][16]/CE |
+| Path #9  | 3.333       | 5.881      | 0.828(15%)  | 5.053(85%) | -0.121     | -2.943 | 0.070             | Safely Timed       | Same Clock        | 3            | 4      | FDRE/C-(12)-LUT4-(16)-LUT6-(3)-LUT3-(25)-FDRE/CE | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | None      | None-None     | 0            | 0                | 0             | 0       | 25          | 0          | 0          | FDRE/C                    | FDRE/CE                 | pe_id_reg[5]/C  | gen_wreg.w_regs_reg[2][18]/CE |
+| Path #10 | 3.333       | 5.881      | 0.828(15%)  | 5.053(85%) | -0.121     | -2.943 | 0.070             | Safely Timed       | Same Clock        | 3            | 4      | FDRE/C-(12)-LUT4-(16)-LUT6-(3)-LUT3-(25)-FDRE/CE | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | clk_out3_cnn_accelerator_system_clk_wiz_0_0 | None      | None-None     | 0            | 0                | 0             | 0       | 25          | 0          | 0          | FDRE/C                    | FDRE/CE                 | pe_id_reg[5]/C  | gen_wreg.w_regs_reg[2][23]/CE |
++----------+-------------+------------+-------------+------------+------------+--------+-------------------+--------------------+-------------------+--------------+--------+--------------------------------------------------+---------------------------------------------+---------------------------------------------+-----------+---------------+--------------+------------------+---------------+---------+-------------+------------+------------+---------------------------+-------------------------+-----------------+-------------------------------+
+* Bounding box calculated as % of dimensions for the target device (244, 400)
+
+
+report_timing -setup -max_paths 5 -slack_lesser_than 0
+INFO: [Timing 38-78] ReportTimingParams: -max_paths 5 -nworst 1 -delay_type max -sort_by slack.
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2024 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2024.1 (win64) Build 5076996 Wed May 22 18:37:14 MDT 2024
+| Date         : Wed Jun  3 22:30:00 2026
+| Host         : DOHYUNKIM266E running 64-bit major release  (build 9200)
+| Command      : report_timing -setup -max_paths 5 -slack_lesser_than 0
+| Design       : cnn_accelerator_system_wrapper
+| Device       : 7a100t-csg324
+| Speed File   : -1  PRODUCTION 1.23 2018-06-13
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Report
+
+Slack (VIOLATED) :        -2.990ns  (required time - arrival time)
+  Source:                 cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@1.667ns period=3.333ns})
+  Destination:            cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][15]/CE
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@1.667ns period=3.333ns})
+  Path Group:             clk_out3_cnn_accelerator_system_clk_wiz_0_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            3.333ns  (clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@3.333ns - clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@0.000ns)
+  Data Path Delay:        6.104ns  (logic 0.828ns (13.565%)  route 5.276ns (86.435%))
+  Logic Levels:           3  (LUT3=1 LUT4=1 LUT6=1)
+  Clock Path Skew:        0.056ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    5.101ns = ( 8.435 - 3.333 ) 
+    Source Clock Delay      (SCD):    5.225ns
+    Clock Pessimism Removal (CPR):    0.179ns
+  Clock Uncertainty:      0.070ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.120ns
+    Phase Error              (PE):    0.000ns
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise edge)
+                                                      0.000     0.000 r  
+    E3                                                0.000     0.000 r  CLK100MHZ (IN)
+                         net (fo=0)                   0.000     0.000    CLK100MHZ
+    E3                   IBUF (Prop_ibuf_I_O)         1.482     1.482 r  CLK100MHZ_IBUF_inst/O
+                         net (fo=1, routed)           2.025     3.506    cnn_accelerator_system_i/util_ds_buf_0/U0/BUFG_I[0]
+    BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.096     3.602 r  cnn_accelerator_system_i/util_ds_buf_0/U0/USE_BUFG.GEN_BUFG[0].BUFG_U/O
+                         net (fo=2, routed)           1.809     5.412    cnn_accelerator_system_i/clk_wiz_0/inst/clk_in1
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                     -3.922     1.490 r  cnn_accelerator_system_i/clk_wiz_0/inst/mmcm_adv_inst/CLKOUT2
+                         net (fo=1, routed)           2.018     3.508    cnn_accelerator_system_i/clk_wiz_0/inst/clk_out3_cnn_accelerator_system_clk_wiz_0_0
+    BUFGCTRL_X0Y2        BUFG (Prop_bufg_I_O)         0.096     3.604 r  cnn_accelerator_system_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=40436, routed)       1.620     5.225    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/clk
+    SLICE_X48Y80         FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X48Y80         FDRE (Prop_fdre_C_Q)         0.456     5.681 f  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/Q
+                         net (fo=12, routed)          0.938     6.619    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/wl_pe_id[5]
+    SLICE_X44Y81         LUT4 (Prop_lut4_I3_O)        0.124     6.743 f  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_3__1/O
+                         net (fo=16, routed)          0.884     7.627    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_3__1_n_0
+    SLICE_X45Y81         LUT6 (Prop_lut6_I5_O)        0.124     7.751 r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_2__3/O
+                         net (fo=3, routed)           2.346    10.096    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_load_en_dec[4]
+    SLICE_X48Y134        LUT3 (Prop_lut3_I0_O)        0.124    10.220 r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_1__13/O
+                         net (fo=25, routed)          1.108    11.329    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/E[0]
+    SLICE_X45Y154        FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][15]/CE
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise edge)
+                                                      3.333     3.333 r  
+    E3                                                0.000     3.333 r  CLK100MHZ (IN)
+                         net (fo=0)                   0.000     3.333    CLK100MHZ
+    E3                   IBUF (Prop_ibuf_I_O)         1.411     4.745 r  CLK100MHZ_IBUF_inst/O
+                         net (fo=1, routed)           1.920     6.665    cnn_accelerator_system_i/util_ds_buf_0/U0/BUFG_I[0]
+    BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.091     6.756 r  cnn_accelerator_system_i/util_ds_buf_0/U0/USE_BUFG.GEN_BUFG[0].BUFG_U/O
+                         net (fo=2, routed)           1.683     8.439    cnn_accelerator_system_i/clk_wiz_0/inst/clk_in1
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                     -3.694     4.744 r  cnn_accelerator_system_i/clk_wiz_0/inst/mmcm_adv_inst/CLKOUT2
+                         net (fo=1, routed)           1.923     6.668    cnn_accelerator_system_i/clk_wiz_0/inst/clk_out3_cnn_accelerator_system_clk_wiz_0_0
+    BUFGCTRL_X0Y2        BUFG (Prop_bufg_I_O)         0.091     6.759 r  cnn_accelerator_system_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=40436, routed)       1.676     8.435    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/clk
+    SLICE_X45Y154        FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][15]/C
+                         clock pessimism              0.179     8.614    
+                         clock uncertainty           -0.070     8.544    
+    SLICE_X45Y154        FDRE (Setup_fdre_C_CE)      -0.205     8.339    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][15]
+  -------------------------------------------------------------------
+                         required time                          8.339    
+                         arrival time                         -11.329    
+  -------------------------------------------------------------------
+                         slack                                 -2.990    
+
+Slack (VIOLATED) :        -2.990ns  (required time - arrival time)
+  Source:                 cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@1.667ns period=3.333ns})
+  Destination:            cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][2]/CE
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@1.667ns period=3.333ns})
+  Path Group:             clk_out3_cnn_accelerator_system_clk_wiz_0_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            3.333ns  (clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@3.333ns - clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@0.000ns)
+  Data Path Delay:        6.104ns  (logic 0.828ns (13.565%)  route 5.276ns (86.435%))
+  Logic Levels:           3  (LUT3=1 LUT4=1 LUT6=1)
+  Clock Path Skew:        0.056ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    5.101ns = ( 8.435 - 3.333 ) 
+    Source Clock Delay      (SCD):    5.225ns
+    Clock Pessimism Removal (CPR):    0.179ns
+  Clock Uncertainty:      0.070ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.120ns
+    Phase Error              (PE):    0.000ns
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise edge)
+                                                      0.000     0.000 r  
+    E3                                                0.000     0.000 r  CLK100MHZ (IN)
+                         net (fo=0)                   0.000     0.000    CLK100MHZ
+    E3                   IBUF (Prop_ibuf_I_O)         1.482     1.482 r  CLK100MHZ_IBUF_inst/O
+                         net (fo=1, routed)           2.025     3.506    cnn_accelerator_system_i/util_ds_buf_0/U0/BUFG_I[0]
+    BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.096     3.602 r  cnn_accelerator_system_i/util_ds_buf_0/U0/USE_BUFG.GEN_BUFG[0].BUFG_U/O
+                         net (fo=2, routed)           1.809     5.412    cnn_accelerator_system_i/clk_wiz_0/inst/clk_in1
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                     -3.922     1.490 r  cnn_accelerator_system_i/clk_wiz_0/inst/mmcm_adv_inst/CLKOUT2
+                         net (fo=1, routed)           2.018     3.508    cnn_accelerator_system_i/clk_wiz_0/inst/clk_out3_cnn_accelerator_system_clk_wiz_0_0
+    BUFGCTRL_X0Y2        BUFG (Prop_bufg_I_O)         0.096     3.604 r  cnn_accelerator_system_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=40436, routed)       1.620     5.225    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/clk
+    SLICE_X48Y80         FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X48Y80         FDRE (Prop_fdre_C_Q)         0.456     5.681 f  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/Q
+                         net (fo=12, routed)          0.938     6.619    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/wl_pe_id[5]
+    SLICE_X44Y81         LUT4 (Prop_lut4_I3_O)        0.124     6.743 f  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_3__1/O
+                         net (fo=16, routed)          0.884     7.627    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_3__1_n_0
+    SLICE_X45Y81         LUT6 (Prop_lut6_I5_O)        0.124     7.751 r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_2__3/O
+                         net (fo=3, routed)           2.346    10.096    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_load_en_dec[4]
+    SLICE_X48Y134        LUT3 (Prop_lut3_I0_O)        0.124    10.220 r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_1__13/O
+                         net (fo=25, routed)          1.108    11.329    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/E[0]
+    SLICE_X45Y154        FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][2]/CE
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise edge)
+                                                      3.333     3.333 r  
+    E3                                                0.000     3.333 r  CLK100MHZ (IN)
+                         net (fo=0)                   0.000     3.333    CLK100MHZ
+    E3                   IBUF (Prop_ibuf_I_O)         1.411     4.745 r  CLK100MHZ_IBUF_inst/O
+                         net (fo=1, routed)           1.920     6.665    cnn_accelerator_system_i/util_ds_buf_0/U0/BUFG_I[0]
+    BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.091     6.756 r  cnn_accelerator_system_i/util_ds_buf_0/U0/USE_BUFG.GEN_BUFG[0].BUFG_U/O
+                         net (fo=2, routed)           1.683     8.439    cnn_accelerator_system_i/clk_wiz_0/inst/clk_in1
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                     -3.694     4.744 r  cnn_accelerator_system_i/clk_wiz_0/inst/mmcm_adv_inst/CLKOUT2
+                         net (fo=1, routed)           1.923     6.668    cnn_accelerator_system_i/clk_wiz_0/inst/clk_out3_cnn_accelerator_system_clk_wiz_0_0
+    BUFGCTRL_X0Y2        BUFG (Prop_bufg_I_O)         0.091     6.759 r  cnn_accelerator_system_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=40436, routed)       1.676     8.435    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/clk
+    SLICE_X45Y154        FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][2]/C
+                         clock pessimism              0.179     8.614    
+                         clock uncertainty           -0.070     8.544    
+    SLICE_X45Y154        FDRE (Setup_fdre_C_CE)      -0.205     8.339    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][2]
+  -------------------------------------------------------------------
+                         required time                          8.339    
+                         arrival time                         -11.329    
+  -------------------------------------------------------------------
+                         slack                                 -2.990    
+
+Slack (VIOLATED) :        -2.990ns  (required time - arrival time)
+  Source:                 cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@1.667ns period=3.333ns})
+  Destination:            cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][3]/CE
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@1.667ns period=3.333ns})
+  Path Group:             clk_out3_cnn_accelerator_system_clk_wiz_0_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            3.333ns  (clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@3.333ns - clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@0.000ns)
+  Data Path Delay:        6.104ns  (logic 0.828ns (13.565%)  route 5.276ns (86.435%))
+  Logic Levels:           3  (LUT3=1 LUT4=1 LUT6=1)
+  Clock Path Skew:        0.056ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    5.101ns = ( 8.435 - 3.333 ) 
+    Source Clock Delay      (SCD):    5.225ns
+    Clock Pessimism Removal (CPR):    0.179ns
+  Clock Uncertainty:      0.070ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.120ns
+    Phase Error              (PE):    0.000ns
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise edge)
+                                                      0.000     0.000 r  
+    E3                                                0.000     0.000 r  CLK100MHZ (IN)
+                         net (fo=0)                   0.000     0.000    CLK100MHZ
+    E3                   IBUF (Prop_ibuf_I_O)         1.482     1.482 r  CLK100MHZ_IBUF_inst/O
+                         net (fo=1, routed)           2.025     3.506    cnn_accelerator_system_i/util_ds_buf_0/U0/BUFG_I[0]
+    BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.096     3.602 r  cnn_accelerator_system_i/util_ds_buf_0/U0/USE_BUFG.GEN_BUFG[0].BUFG_U/O
+                         net (fo=2, routed)           1.809     5.412    cnn_accelerator_system_i/clk_wiz_0/inst/clk_in1
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                     -3.922     1.490 r  cnn_accelerator_system_i/clk_wiz_0/inst/mmcm_adv_inst/CLKOUT2
+                         net (fo=1, routed)           2.018     3.508    cnn_accelerator_system_i/clk_wiz_0/inst/clk_out3_cnn_accelerator_system_clk_wiz_0_0
+    BUFGCTRL_X0Y2        BUFG (Prop_bufg_I_O)         0.096     3.604 r  cnn_accelerator_system_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=40436, routed)       1.620     5.225    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/clk
+    SLICE_X48Y80         FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X48Y80         FDRE (Prop_fdre_C_Q)         0.456     5.681 f  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/Q
+                         net (fo=12, routed)          0.938     6.619    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/wl_pe_id[5]
+    SLICE_X44Y81         LUT4 (Prop_lut4_I3_O)        0.124     6.743 f  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_3__1/O
+                         net (fo=16, routed)          0.884     7.627    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_3__1_n_0
+    SLICE_X45Y81         LUT6 (Prop_lut6_I5_O)        0.124     7.751 r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_2__3/O
+                         net (fo=3, routed)           2.346    10.096    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_load_en_dec[4]
+    SLICE_X48Y134        LUT3 (Prop_lut3_I0_O)        0.124    10.220 r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_1__13/O
+                         net (fo=25, routed)          1.108    11.329    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/E[0]
+    SLICE_X45Y154        FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][3]/CE
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise edge)
+                                                      3.333     3.333 r  
+    E3                                                0.000     3.333 r  CLK100MHZ (IN)
+                         net (fo=0)                   0.000     3.333    CLK100MHZ
+    E3                   IBUF (Prop_ibuf_I_O)         1.411     4.745 r  CLK100MHZ_IBUF_inst/O
+                         net (fo=1, routed)           1.920     6.665    cnn_accelerator_system_i/util_ds_buf_0/U0/BUFG_I[0]
+    BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.091     6.756 r  cnn_accelerator_system_i/util_ds_buf_0/U0/USE_BUFG.GEN_BUFG[0].BUFG_U/O
+                         net (fo=2, routed)           1.683     8.439    cnn_accelerator_system_i/clk_wiz_0/inst/clk_in1
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                     -3.694     4.744 r  cnn_accelerator_system_i/clk_wiz_0/inst/mmcm_adv_inst/CLKOUT2
+                         net (fo=1, routed)           1.923     6.668    cnn_accelerator_system_i/clk_wiz_0/inst/clk_out3_cnn_accelerator_system_clk_wiz_0_0
+    BUFGCTRL_X0Y2        BUFG (Prop_bufg_I_O)         0.091     6.759 r  cnn_accelerator_system_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=40436, routed)       1.676     8.435    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/clk
+    SLICE_X45Y154        FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][3]/C
+                         clock pessimism              0.179     8.614    
+                         clock uncertainty           -0.070     8.544    
+    SLICE_X45Y154        FDRE (Setup_fdre_C_CE)      -0.205     8.339    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][3]
+  -------------------------------------------------------------------
+                         required time                          8.339    
+                         arrival time                         -11.329    
+  -------------------------------------------------------------------
+                         slack                                 -2.990    
+
+Slack (VIOLATED) :        -2.990ns  (required time - arrival time)
+  Source:                 cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@1.667ns period=3.333ns})
+  Destination:            cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][5]/CE
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@1.667ns period=3.333ns})
+  Path Group:             clk_out3_cnn_accelerator_system_clk_wiz_0_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            3.333ns  (clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@3.333ns - clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@0.000ns)
+  Data Path Delay:        6.104ns  (logic 0.828ns (13.565%)  route 5.276ns (86.435%))
+  Logic Levels:           3  (LUT3=1 LUT4=1 LUT6=1)
+  Clock Path Skew:        0.056ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    5.101ns = ( 8.435 - 3.333 ) 
+    Source Clock Delay      (SCD):    5.225ns
+    Clock Pessimism Removal (CPR):    0.179ns
+  Clock Uncertainty:      0.070ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.120ns
+    Phase Error              (PE):    0.000ns
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise edge)
+                                                      0.000     0.000 r  
+    E3                                                0.000     0.000 r  CLK100MHZ (IN)
+                         net (fo=0)                   0.000     0.000    CLK100MHZ
+    E3                   IBUF (Prop_ibuf_I_O)         1.482     1.482 r  CLK100MHZ_IBUF_inst/O
+                         net (fo=1, routed)           2.025     3.506    cnn_accelerator_system_i/util_ds_buf_0/U0/BUFG_I[0]
+    BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.096     3.602 r  cnn_accelerator_system_i/util_ds_buf_0/U0/USE_BUFG.GEN_BUFG[0].BUFG_U/O
+                         net (fo=2, routed)           1.809     5.412    cnn_accelerator_system_i/clk_wiz_0/inst/clk_in1
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                     -3.922     1.490 r  cnn_accelerator_system_i/clk_wiz_0/inst/mmcm_adv_inst/CLKOUT2
+                         net (fo=1, routed)           2.018     3.508    cnn_accelerator_system_i/clk_wiz_0/inst/clk_out3_cnn_accelerator_system_clk_wiz_0_0
+    BUFGCTRL_X0Y2        BUFG (Prop_bufg_I_O)         0.096     3.604 r  cnn_accelerator_system_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=40436, routed)       1.620     5.225    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/clk
+    SLICE_X48Y80         FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X48Y80         FDRE (Prop_fdre_C_Q)         0.456     5.681 f  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/Q
+                         net (fo=12, routed)          0.938     6.619    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/wl_pe_id[5]
+    SLICE_X44Y81         LUT4 (Prop_lut4_I3_O)        0.124     6.743 f  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_3__1/O
+                         net (fo=16, routed)          0.884     7.627    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_3__1_n_0
+    SLICE_X45Y81         LUT6 (Prop_lut6_I5_O)        0.124     7.751 r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_2__3/O
+                         net (fo=3, routed)           2.346    10.096    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_load_en_dec[4]
+    SLICE_X48Y134        LUT3 (Prop_lut3_I0_O)        0.124    10.220 r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_1__13/O
+                         net (fo=25, routed)          1.108    11.329    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/E[0]
+    SLICE_X45Y154        FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][5]/CE
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise edge)
+                                                      3.333     3.333 r  
+    E3                                                0.000     3.333 r  CLK100MHZ (IN)
+                         net (fo=0)                   0.000     3.333    CLK100MHZ
+    E3                   IBUF (Prop_ibuf_I_O)         1.411     4.745 r  CLK100MHZ_IBUF_inst/O
+                         net (fo=1, routed)           1.920     6.665    cnn_accelerator_system_i/util_ds_buf_0/U0/BUFG_I[0]
+    BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.091     6.756 r  cnn_accelerator_system_i/util_ds_buf_0/U0/USE_BUFG.GEN_BUFG[0].BUFG_U/O
+                         net (fo=2, routed)           1.683     8.439    cnn_accelerator_system_i/clk_wiz_0/inst/clk_in1
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                     -3.694     4.744 r  cnn_accelerator_system_i/clk_wiz_0/inst/mmcm_adv_inst/CLKOUT2
+                         net (fo=1, routed)           1.923     6.668    cnn_accelerator_system_i/clk_wiz_0/inst/clk_out3_cnn_accelerator_system_clk_wiz_0_0
+    BUFGCTRL_X0Y2        BUFG (Prop_bufg_I_O)         0.091     6.759 r  cnn_accelerator_system_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=40436, routed)       1.676     8.435    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/clk
+    SLICE_X45Y154        FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][5]/C
+                         clock pessimism              0.179     8.614    
+                         clock uncertainty           -0.070     8.544    
+    SLICE_X45Y154        FDRE (Setup_fdre_C_CE)      -0.205     8.339    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][5]
+  -------------------------------------------------------------------
+                         required time                          8.339    
+                         arrival time                         -11.329    
+  -------------------------------------------------------------------
+                         slack                                 -2.990    
+
+Slack (VIOLATED) :        -2.990ns  (required time - arrival time)
+  Source:                 cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@1.667ns period=3.333ns})
+  Destination:            cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][7]/CE
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@1.667ns period=3.333ns})
+  Path Group:             clk_out3_cnn_accelerator_system_clk_wiz_0_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            3.333ns  (clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@3.333ns - clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@0.000ns)
+  Data Path Delay:        6.104ns  (logic 0.828ns (13.565%)  route 5.276ns (86.435%))
+  Logic Levels:           3  (LUT3=1 LUT4=1 LUT6=1)
+  Clock Path Skew:        0.056ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    5.101ns = ( 8.435 - 3.333 ) 
+    Source Clock Delay      (SCD):    5.225ns
+    Clock Pessimism Removal (CPR):    0.179ns
+  Clock Uncertainty:      0.070ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.120ns
+    Phase Error              (PE):    0.000ns
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise edge)
+                                                      0.000     0.000 r  
+    E3                                                0.000     0.000 r  CLK100MHZ (IN)
+                         net (fo=0)                   0.000     0.000    CLK100MHZ
+    E3                   IBUF (Prop_ibuf_I_O)         1.482     1.482 r  CLK100MHZ_IBUF_inst/O
+                         net (fo=1, routed)           2.025     3.506    cnn_accelerator_system_i/util_ds_buf_0/U0/BUFG_I[0]
+    BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.096     3.602 r  cnn_accelerator_system_i/util_ds_buf_0/U0/USE_BUFG.GEN_BUFG[0].BUFG_U/O
+                         net (fo=2, routed)           1.809     5.412    cnn_accelerator_system_i/clk_wiz_0/inst/clk_in1
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                     -3.922     1.490 r  cnn_accelerator_system_i/clk_wiz_0/inst/mmcm_adv_inst/CLKOUT2
+                         net (fo=1, routed)           2.018     3.508    cnn_accelerator_system_i/clk_wiz_0/inst/clk_out3_cnn_accelerator_system_clk_wiz_0_0
+    BUFGCTRL_X0Y2        BUFG (Prop_bufg_I_O)         0.096     3.604 r  cnn_accelerator_system_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=40436, routed)       1.620     5.225    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/clk
+    SLICE_X48Y80         FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X48Y80         FDRE (Prop_fdre_C_Q)         0.456     5.681 f  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/Q
+                         net (fo=12, routed)          0.938     6.619    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/wl_pe_id[5]
+    SLICE_X44Y81         LUT4 (Prop_lut4_I3_O)        0.124     6.743 f  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_3__1/O
+                         net (fo=16, routed)          0.884     7.627    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_3__1_n_0
+    SLICE_X45Y81         LUT6 (Prop_lut6_I5_O)        0.124     7.751 r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_2__3/O
+                         net (fo=3, routed)           2.346    10.096    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_load_en_dec[4]
+    SLICE_X48Y134        LUT3 (Prop_lut3_I0_O)        0.124    10.220 r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/gen_wreg.w_regs[2][24]_i_1__13/O
+                         net (fo=25, routed)          1.108    11.329    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/E[0]
+    SLICE_X45Y154        FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][7]/CE
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise edge)
+                                                      3.333     3.333 r  
+    E3                                                0.000     3.333 r  CLK100MHZ (IN)
+                         net (fo=0)                   0.000     3.333    CLK100MHZ
+    E3                   IBUF (Prop_ibuf_I_O)         1.411     4.745 r  CLK100MHZ_IBUF_inst/O
+                         net (fo=1, routed)           1.920     6.665    cnn_accelerator_system_i/util_ds_buf_0/U0/BUFG_I[0]
+    BUFGCTRL_X0Y16       BUFG (Prop_bufg_I_O)         0.091     6.756 r  cnn_accelerator_system_i/util_ds_buf_0/U0/USE_BUFG.GEN_BUFG[0].BUFG_U/O
+                         net (fo=2, routed)           1.683     8.439    cnn_accelerator_system_i/clk_wiz_0/inst/clk_in1
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                     -3.694     4.744 r  cnn_accelerator_system_i/clk_wiz_0/inst/mmcm_adv_inst/CLKOUT2
+                         net (fo=1, routed)           1.923     6.668    cnn_accelerator_system_i/clk_wiz_0/inst/clk_out3_cnn_accelerator_system_clk_wiz_0_0
+    BUFGCTRL_X0Y2        BUFG (Prop_bufg_I_O)         0.091     6.759 r  cnn_accelerator_system_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=40436, routed)       1.676     8.435    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/clk
+    SLICE_X45Y154        FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][7]/C
+                         clock pessimism              0.179     8.614    
+                         clock uncertainty           -0.070     8.544    
+    SLICE_X45Y154        FDRE (Setup_fdre_C_CE)      -0.205     8.339    cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][7]
+  -------------------------------------------------------------------
+                         required time                          8.339    
+                         arrival time                         -11.329    
+  -------------------------------------------------------------------
+                         slack                                 -2.990    
+

@@ -69,10 +69,10 @@ module weight_loader_conv2 (
     //==========================================================================
     // PE broadcast
     //==========================================================================
-    output reg  [7:0]  pe_id,            // 0~191 (target PE)
-    output reg  [1:0]  slot_id,          // 0~2 (K_col slot, = kw)
+    (* max_fanout = 32 *) output reg  [7:0]  pe_id,    // 0~191 (target PE) ★300MHz: 192 PE broadcast 복제
+    (* max_fanout = 32 *) output reg  [1:0]  slot_id,  // 0~2 (K_col slot, = kw)  ★ replication
     output wire [24:0] packed_w,         // 25-bit Aport (c2w_doutb 하위 25-bit 직결)
-    output reg         pe_load_en        // 1-cycle pulse per PE
+    (* max_fanout = 32 *) output reg     pe_load_en     // 1-cycle pulse per PE  ★ replication
 );
 
     //==========================================================================

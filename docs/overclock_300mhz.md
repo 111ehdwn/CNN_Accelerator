@@ -109,10 +109,14 @@ BD(`connect_bd_net`)는 "선 잇기"라 **순차 로직(FF)을 만들 수 없음
 | `RTL/core/cdc_bit_sync.v` | **신규** | 2-FF level 동기화기 |
 | `RTL/cnn_accelerator.v` | **수정** | ① `aclk` 포트 추가 ② 도메인별 reset(rst@300 재동기화 / rst_a@100) ③ enable/start/img_ready 동기화 → `*_q` ④ img_done/input_consumed 출력 CDC ⑤ `bram_output .clkb(clk)→(aclk)` |
 | `RTL/control_status_register/*` | **무변경** | CSR pristine |
-| 엔진/BMG/weight_loader | **무변경** | — |
+| `RTL/conv2/conv2_engine.v` | **수정** | ★timing closure(§11.6): Step 1b(weight broadcast +1 reg) + Step 2(`PE_BC_DELAY` PE 입력 +N reg 복제 + downstream 재타이밍). iverilog bit-exact. |
+| `RTL/conv2/conv2_fsm.v` | **수정** | ★timing closure(§11/§11.6): `(* max_fanout=32 *)` on `state`/`kw_cnt`(복제) + `PE_BC_DELAY` 파라미터로 DRAIN 을 `11+N` 연장. 논리 불변 |
+| `RTL/conv2/weight_loader.v` | **수정** | ★timing closure(§11): `(* max_fanout=32 *)` on `pe_id`, `slot_id`, `pe_load_en`. 논리 불변 |
+| conv1/maxpool/fc 엔진·BMG | **무변경** | — |
+| `TB/multi_img/tb_system_axi_multi_2clk.v` | **신규** | 듀얼클럭 CDC 검증 TB(§8.2) |
 | `TB/multi_img/tb_cnn_accelerator_multi.v`, `tb_system_axi_multi.v` | 수정 | `.aclk(clk)` 추가(단일클럭 회귀용) |
 
-> 엔진(conv1/conv2/maxpool/fc)·weight BMG는 전부 `clk`만 사용 → **aclk threading 불필요**(common-clock 유지 덕).
+> 엔진·weight BMG는 전부 `clk`만 사용 → **aclk threading 불필요**(common-clock 유지 덕). conv2 max_fanout 은 **속성만**(기능 불변, 재타이밍 아님 — §11.3 Step 1).
 
 ---
 
@@ -136,23 +140,29 @@ BD(`connect_bd_net`)는 "선 잇기"라 **순차 로직(FF)을 만들 수 없음
 
 *(`set_multicycle_path`가 왜·어떻게 동작하는지 → **부록 A.3**.)*
 
-`clk_wiz`가 만든 generated clock 이름은 `report_clocks`로 확인 후 치환(예 `clk_out1_..._clk_wiz_0_0`=100, `clk_out3_..._clk_wiz_0_0`=300).
+실제 적용 위치: **`Arty-a7-100-Master_v2.xdc`** 끝에 append됨(`v1`=원본 백업). `report_clocks`로 확인한 이 프로젝트의 실제 클럭 이름:
+`clk_out1_cnn_accelerator_system_clk_wiz_0_0`=100MHz, `clk_out3_cnn_accelerator_system_clk_wiz_0_0`=300MHz (clk_out2=200 MIG ref).
 
 ```tcl
-# ── 100 → 300 (AXI BRAM Ctrl → BMG Port A write 버스 + 제어 pulse 첫 sync FF) ──
-#    데이터가 100MHz 한 주기 동안 안정 → 300 기준 3 cycle 창으로 완화 (idempotent 3회 write).
-set_multicycle_path -setup 3 -from [get_clocks <CLK100>] -to [get_clocks <CLK300>]
-set_multicycle_path -hold  2 -from [get_clocks <CLK100>] -to [get_clocks <CLK300>]
+set CLK100 [get_clocks clk_out1_cnn_accelerator_system_clk_wiz_0_0]
+set CLK300 [get_clocks clk_out3_cnn_accelerator_system_clk_wiz_0_0]
 
-# ── 300 → 100 (img_done / input_consumed toggle 동기화기) ──
-#    toggle는 image당 1회로 quasi-static → 단일 cycle로도 자연 closure. 대칭 완화는 무해.
-set_multicycle_path -setup 3 -from [get_clocks <CLK300>] -to [get_clocks <CLK100>]
-set_multicycle_path -hold  2 -from [get_clocks <CLK300>] -to [get_clocks <CLK100>]
+# ── 100 → 300 (slow→fast): AXI BRAM Ctrl → BMG Port A write 버스(multi-bit) ──
+#    데이터가 100MHz 한 주기(=300 기준 3 cycle) 안정 → setup 을 3번째 300 엣지로 완화
+#    (idempotent 3회 write). enable/start/img_ready 동기화기 첫 FF(quasi-static)도 함께 완화.
+set_multicycle_path -setup 3 -from $CLK100 -to $CLK300
+set_multicycle_path -hold  2 -from $CLK100 -to $CLK300
+
+# ── 300 → 100 (fast→slow): 이 방향 fabric 경로는 img_done/input_consumed 의 ──
+#    toggle 동기화기(2-FF) 입력뿐 → CDC false_path. (메타는 2-FF+ASYNC_REG 흡수;
+#    multicycle 아님 — fast→slow coincident-edge hold 위험을 회피.)
+set_false_path -from $CLK300 -to $CLK100
 ```
 
 **주의**
+- **100→300 은 `set_multicycle_path`, 300→100 은 `set_false_path`** — 비대칭. 이유: 100→300 cone 엔 write 버스(실데이터, 타이밍 필요)가 있어 multicycle, 300→100 cone 엔 동기화기 입력만 있어 CDC(false_path). 300→100 에 multicycle(특히 fast→slow hold) 거는 건 불필요·위험.
 - **`set_clock_groups -asynchronous`(100↔300) 금지** — multi-bit write 버스가 동기 위상정렬에 의존하므로 async 선언 시 버스가 false-path되어 데이터 무결성 보장 안 됨. 두 클럭은 **related(같은 MMCM)** 로 유지.
-- 동기화기 FF에는 RTL에서 `(* ASYNC_REG="TRUE" *)` 부여됨(배치/메타 처리).
+- 동기화기 FF에는 RTL에서 `(* ASYNC_REG="TRUE" *)` 부여됨(배치/메타 처리). (더 타이트한 MTBF 원하면 false_path 대신 `set_max_delay -datapath_only` 로 동기화기 입력 net 을 bound 가능.)
 - `bram_output`의 내부 clka(300)↔clkb(100) 크로싱은 **independent-clock IP 자체 XDC**가 처리(우리가 제약 불필요).
 - intra-300 datapath(3.33ns)가 진짜 closure 대상 — L=2 + 파이프라이닝이 이를 위함.
 
@@ -162,15 +172,17 @@ set_multicycle_path -hold  2 -from [get_clocks <CLK300>] -to [get_clocks <CLK100
 
 1. **iverilog 단일클럭 회귀** (`aclk=clk`) — ✅ **완료**: `tb_cnn_accelerator_multi` 40/40(1798 cyc/img), `tb_system_axi_multi` 10/10. CDC 추가가 datapath 거동을 안 깸 확인.
 2. **iverilog 듀얼클럭 CDC TB** (`tb_system_axi_multi_2clk`, 100/300 위상정렬 3:1) — ✅ **완료**: logit 10/10 bit-exact + bram_output 10/10 + **img_cnt 정확히 +1/image**(3배카운트 X) + **데드락 없음**(input_consumed 손실 X). triple-count/pulse-loss 기능 검증 통과.
-3. **Vivado** — 합성 → §7 XDC → **WNS ≥ 0 @300MHz** 확인.
-4. **HW** — N=100 → N=10000. **class match 10000/10000 유지 + timer(100MHz cycle) ~1/3 → wall-clock ~3× 단축**이면 성공.
+3. **Vivado** — 합성 → §7 XDC → WNS ≥ 0 @300MHz. ⚠️ **1차 결과: timing FAIL(WNS −2.99)** — CDC/제약은 검증됐고(§11.1) **conv2 broadcast fanout 이 병목**(§11.2). closure 작업 진행중(§11.3 Step 1: replication+phys_opt). **→ §11 로그 참조.**
+4. **HW** — N=100 → N=10000. **class match 10000/10000 유지 + timer(100MHz cycle) ~1/3 → wall-clock ~3× 단축**이면 성공. (timing closure 후)
 
 ---
 
 ## 9. 리스크 / 열린 항목
-- ★ **BMG Port A 100→300 write 버스의 multicycle** — 가장 큰, 그리고 **유일하게 "지금" 확정 못 하는** 검증 포인트. sim은 **기능**(idempotent 3회 write → 데이터 정확)까지만 보여줌(2clk TB 통과). **실 타이밍(배선이 3틱 창 안에 도착? WNS≥0?)·메타스테이블은 Vivado P&R + HW로만 확정** (sim/검증 한계표 → **부록 A.4**). 안 닫히면 → 해당 BMG independent-clock regen + 엔진 aclk 결선(fallback).
+- ✅ **(해소) BMG Port A 100→300 write 버스 multicycle** — 1차 구현에서 **+0.107ns clean**(req 10ns), idempotent write 검증됨. 예측했던 최대 리스크였으나 의도대로 작동(§11.1). CDC 메타는 2-FF+ASYNC_REG 로 처리.
+- ★ **(현 주리스크) conv2 broadcast fanout 의 300MHz closure** — datapath 실효 Fmax ≈158~165MHz, route 지배. Step 1(replication+phys_opt)로 얼마나 좁혀지는지가 관건. 안 되면 Step 2(제어 broadcast 파이프라인, 침습적·재검증). **→ §11.**
 - `clk_wiz` 300 추가 후 VCO/jitter 경고 확인(100/200/300 동시 — feasible하나 GUI 경고 점검).
 - live BD의 MIG 설정(tCK 3077 / 4:1 → ui_clk 81.25)이 백업과 동일한지 `report_clocks`로 확인.
+- (부차) clk_out1(100) 도메인 ram_interconnect 512b up/downsizer −0.043ns/8ep — 300 이슈와 별개, impl strategy 로 정리 가능.
 
 ---
 
@@ -262,7 +274,86 @@ STA(타이밍 분석기)에게 **"이 경로는 1 클럭 말고 N 클럭 줘도 
 
 ---
 
-## 11. Sources (전체 오버클럭 불가 근거)
+## 11. 300MHz Timing Closure 로그 (구현 1차 + conv2 broadcast fanout)
+
+### 11.1 구현 1차 결과 (@300MHz, phys_opt 전)
+write_bitstream 은 완료됐으나 **timing FAIL**: **WNS −2.99ns, TNS −153865ns, Failing Endpoints 110302/176215**.
+
+`report_clock_interaction` 판독 — **CDC/제약은 전부 검증됨(무죄)**, 실패는 100% datapath 내부:
+| From → To | WNS | Failing | 분류 |
+|---|---|---|---|
+| **clk_out3 → clk_out3** (300 datapath) | **−2.99** | **110302** | ★ 전부 여기 |
+| clk_out1 → clk_out3 (write 버스) | **+0.107** | 0 | multicycle 작동(req=10ns) ✅ |
+| clk_out3 → clk_out1 (toggle) | — | — | false_path 작동 ✅ |
+| clk_out1 → clk_out1 (100 도메인) | −0.043 | 8 | ram_interconnect 512b up/downsizer, 별개·미세 |
+
+### 11.2 진단 — 병목은 compute 아닌 conv2 broadcast (route 지배)
+워스트 경로(`report_design_analysis` / `report_timing`, 저장: `docs/timing/overclock_timing_violation_except_conv2weight.txt`):
+- `conv2/wl_inst/pe_id` → (LUT decode) → PE `w_regs_reg/CE`. **Path 6.10ns = logic 0.83(14%) + route 5.28(86%)**, Logic Levels 3, **DSP None**.
+- = **weight-load enable broadcast** (MAC 아님). `pe_cell` 확인: `w_regs CE=load_en`(1회성 적재 전용), compute는 `w_regs[sel]→DSP` 풀파이프(AREG/BREG/MREG/PREG)로 **분리**.
+- ★ **weight-load 제외**(`set_false_path -to *w_regs_reg*`) 후 재측정 → **여전히 WNS −2.72, 67206 failing**. 새 워스트 `conv2/fsm_inst/state → DSP`, 또 route 86%.
+- **결론**: weight-load 는 워스트일 뿐, 실패는 **conv2 제어/weight/activation broadcast 전반**(`state`/`sel`/`pe_en`/`pe_id`/`packed_w` → die 전역 분산 **192개 PE**, fanout=192). **로직 깊이 문제 아님(logic 14%) — fanout+placement+congestion 의 route 지배**. datapath 실효 Fmax ≈ **158~165MHz** @300타겟.
+
+### 11.3 Fix 전략 (escalation — 덜 침습적 우선)
+| Step | 내용 | 리스크 | 상태 |
+|---|---|---|---|
+| **1** | **replication**: `max_fanout=32` on conv2_fsm `state`/`kw_cnt`, weight_loader `pe_id`/`slot_id`/`pe_load_en` + impl **`phys_opt_design -directive AggressiveFanoutOpt`** | 무위험(논리 불변, 40/40 유지) | **적용·측정중** |
+| **1b** | **packed_w 복제 register** (+1 cycle, weight-load 1회성이라 무해) — `w_regs/D`(fo=192)가 새 워스트면 | 낮음(iverilog 재검증) | 대기 |
+| **2** | **제어 broadcast 파이프라인 + 재타이밍** — conv2 제어 register 단 추가 + 컴퓨트 정렬 재조정 | 높음(conv2 가장 복잡, iverilog 재검증 필수) | 측정 후 결정 |
+
+**측정 결정점**: WNS≥0 → 닫힘 / 살짝 음수 → 1b·floorplan / −2 근처(FSM 제어) → Step 2.
+
+### 11.4 핵심 교훈
+- **L=2 BMG prep(BRAM read)로는 부족** — compute는 DSP 풀파이프로 OK지만, **고fanout 제어/weight broadcast가 route 지배**로 300MHz 진짜 병목. iverilog는 타이밍을 안 보니(부록 A.4) 이건 Vivado에서만 드러남.
+- **CDC·XDC 설계는 1차 구현에서 완전 검증**(multicycle/false_path 의도대로). 남은 건 순수 conv2 물리 closure.
+
+---
+
+### 11.5 Step 2 상세 계획 (핸드오프 — conv2 broadcast 파이프라인)
+**Step 1 결과**: max_fanout+phys_opt → WNS −2.99→**−2.454**(TNS 절반, Failed Routes 0, WHS +0.051). ~173MHz. 복제만으론 부족 — **DSP 226/240=94%** 라 PE가 die 전역 DSP 컬럼에 깔려 broadcast 가 본질적으로 die-spanning(floorplan 불가). **파이프라인이 유일 레버.**
+
+**선행(쉬움) — Step 1b: weight broadcast 복제 register.**
+conv2_engine 에서 `wl_packed_w`/`wl_slot_id`/`pe_load_en_dec` 를 +1 register(`(* max_fanout *)`), PE 는 `_r` 버전 사용. **weight-load 1회성**이라 +1 무해(loader_done→compute 시작까지 수천 cycle 여유). packed_w(fo=192) 복제로 weight-load 워스트 제거. iverilog 40/40 확인.
+
+**본체 — Step 2: PE 입력단 register stage (+N, 재타이밍).**
+- conv2_engine PE-array fan-in 을 +N register(복제): `pe_x`(col_sel mux 출력), `fsm_sel`, `fsm_pe_en`. **col_sel·shift_en·FSM 카운터·c1c2 read 는 원래 타이밍 유지**(window/mux 그대로, mux 출력 pe_x 만 register).
+- downstream 정렬: `sel_pipe`/`pe_en_pipe`/`adder_en`/`kcol_en`/`kcol_kw_phase` 를 **지연된 sel/pe_en 에서 tap** → 전체 +N 균일 시프트(상대 정렬 보존).
+- ★ 재타이밍 검증점: `c2pool_we_reg`/`write_addr` 및 `rdone`/`wdone`(conv2_engine §14). rdone=conv1-facing(c1c2 read 미지연→불변), wdone=maxpool-facing(write +N→지연, race-free 핸드셰이크라 무해 예상) — **반드시 iverilog 확인**.
+- N=1 부터 → Vivado WNS 보고 부족하면 N=2.
+
+**검증**: iverilog `tb_conv1_conv2_multi`(40/40, 0/23040) + `tb_cnn_accelerator_multi`(40/40) **bit-exact 유지**(latency +N 늘지만 logit 동일) → Vivado 재구현 @300 → WNS 반복.
+**병행/대안**: max_fanout 16/8, impl `Performance_Explore`, post-route phys_opt. 그래도 ~−1.5ns 벽이면 **200MHz(2×) 타협** 검토.
+
+**다음 에이전트가 먼저 받을 것**: Step 1 후 `report_design_analysis -setup -max_paths 10` 의 새 워스트 경로(weight-load면 1b, FSM 제어면 Step2 본체).
+
+---
+
+### 11.6 Step 1b + Step 2 구현 완료 (2026-06-04, iverilog bit-exact 검증, Vivado 대기)
+
+두 워스트(weight-load broadcast / compute-control broadcast)가 **둘 다** 닫혀야 하므로 (Step 1 replication 후 둘 다 −2.454 잔존), **Step 1b 와 Step 2 를 함께 구현**. 파일: `RTL/conv2/conv2_engine.v`, `RTL/conv2/conv2_fsm.v`. (weight_loader.v 는 Step 1 의 `max_fanout` 만, 변경 없음.)
+
+| | 무엇 | 어디 | 효과 |
+|---|---|---|---|
+| **Step 1b** (always-on) | weight broadcast `pe_load_en_dec`/`packed_w`/`slot_id` → **+1 register** (`pe_load_en_dec_r`/`wl_packed_w_r`/`wl_slot_id_r`, 후2개 `max_fanout=32`), PE 가 `_r` 사용 | conv2_engine §5.5, §8 | die-spanning weight-load route 를 2단 분할. load 1회성이라 +1 cycle compute 무영향 |
+| **Step 2** (param `PE_BC_DELAY`, 기본 1) | `fsm_sel`/`fsm_pe_en`/`pe_x`(mux 출력) → **+N register 복제** (`sel_sr`/`pe_en_sr` `max_fanout=32`), PE 가 `pe_sel_bc`/`pe_en_bc`/`pe_x_d` 사용. `sel_pipe[0]`/`pe_en_pipe[0]` 를 지연 버전에서 tap → downstream 전체 +N 균일 시프트 | conv2_engine §7.5, §9 | compute-control/activation broadcast route 를 PE 클러스터 근처 replica 출발로 단축 |
+| **Step 2 (FSM)** | `DRAIN_LAST = 11 + PE_BC_DELAY` (drain_cnt 종료 3곳) | conv2_fsm §1,5,6,6.5 | datapath +N drain 보존 → 마지막 c2pool write 가 write_addr/output_pixel_cnt reset 전 완료 |
+
+- **N 변경법**: `conv2_engine.v` 의 `parameter PE_BC_DELAY = 1` 한 줄만 수정(0=Step2 off·Step1b만 / 1 / 2). conv2_engine 이 conv2_fsm 으로 자동 전달 → DRAIN 동기 연장. cnn_accelerator.v(top) 무변경(기본값 사용).
+- **iverilog 검증 (bit-exact, N=0/1/2 전부)**:
+  - 전체 파이프라인 `tb_cnn_accelerator_multi`: **40/40 logit + bram_output readback PASS**. cyc/img: N=0→1798(=baseline), N=1→1799, N=2→1800 (정확히 +N/img).
+  - conv2-direct c2pool 비교: **40/40, 0/23040 bit-exact** (N=0/1 확인). wdone cycle 만 +N 시프트, 데이터 동일.
+  - N=0 은 baseline 과 **cycle 까지 동일** → Step 1b 가 compute 에 무영향임을 실증. N≥1 의 +N/img 는 DRAIN 연장 그대로.
+- ★ **검증 인프라 주의 (다음 작업자 필독)**: `tb_conv1_conv2_multi.v` 와 `tb_conv2_engine_multi.v` 는 **Mac 로컬에서 그대로 쓰면 안 됨**.
+  - `tb_conv1_conv2_multi.v`: golden 경로가 Windows 절대경로 only (`C:/...`) → Mac 에서 `$readmemh` 전부 실패(전 X). 게다가 compare loop 이 **c2pool L=1 read** 가정인데 실제 BMG 는 **L=2** → off-by-one. 두 가지(경로→`data/` + read `i-1`→`i-2`, loop 577→578) 패치해야 동작. (로컬 테스트용 패치본은 commit 안 함.)
+  - `tb_conv2_engine_multi.v`: Mac 에서 **hang** (무한 대기).
+  - `tb_conv1_conv2_maxpool_fc_multi.v`: FC weight **512b 변경 미반영**(port width 32/256 경고) → stale, 0/40.
+  - → **로컬 신뢰 gate = `tb_cnn_accelerator_multi` (local `data/` 경로·L=2 정합·40/40)**. Vivado/Windows 머신에서는 위 TB 들이 정상일 수 있음.
+- **adversarial 감사 (5-lens, 2026-06-04)**: retiming 정렬 불변식 / Step1b weight-load 안전성 / DRAIN·write_addr·wdone 타이밍 / missed-consumers = **전부 CORRECT**. Vivado-synth lens 의 blocker(“max_fanout on unpacked array 가 intermediate stage 복제 안 함”)는 adversarial verify 가 **반증**(N=1 기본 config 엔 intermediate stage 없음 — fanout 은 단일 출력 reg 에 있고 attribute 적용됨; 게다가 phys_opt `AggressiveFanoutOpt` 가 복제 보장). 실제 반영한 개선: `drain_cnt` 4→**5-bit**(N>4 overflow footgun 제거, N≤20 safe) + stale 주석 정정.
+- **다음(Vivado)**: ① N=1 로 합성/구현 → `report_design_analysis -setup -max_paths 10` + `report_clock_interaction`. ② WNS≥0 → 닫힘(HW 검증으로). 살짝 음수 → `PE_BC_DELAY=2` 로 한 줄 바꿔 재시도(iverilog 이미 bit-exact). ③ 여전히 weight-load(`*w_regs*/CE`) 가 워스트면 Step1b 가 안 먹은 것(복제/배치 점검), FSM-control(`fsm_inst/...`→DSP)이면 Step2 N 증가. ④ phys_opt `AggressiveFanoutOpt`(post-route 포함) 병행. ⑤ ~−1.5ns 벽이면 200MHz(2×) 타협.
+
+---
+
+## 12. Sources (전체 오버클럭 불가 근거)
 - [MicroBlaze Maximum Frequencies — UG984 (AMD)](https://docs.amd.com/r/en-US/ug984-vivado-microblaze-ref/Maximum-Frequencies)
 - [MicroBlaze-DDR3-tutorial — viktor-nikolov (Arty A7, 거의 동일 셋업; 200MHz timing fail / 100MHz 안전)](https://github.com/viktor-nikolov/MicroBlaze-DDR3-tutorial)
 - [ARTY MicroBlaze Running at 100MHz — Digilent Forum](https://forum.digilent.com/topic/1993-arty-microblaze-running-at-100mhz/)
