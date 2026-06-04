@@ -1,0 +1,24 @@
+# [STAGE 08] 200MHz 실 HW 실측 (2026-06-04) — class 10000/10000, 108.9ms
+# overclock 전 과정(STAGE 01~07)의 최종 확인. clean 빌드(impl WNS +0.011 @slow corner)라 신뢰 가능.
+# baseline(100MHz) 0.188s 대비 1.72×, 150MHz(0.128s) 대비 1.17×.
+
+=== CNN Accelerator Test (phase-2, N=10000) ===
+[1] weights (direct): conv1=36 conv2=576 fc=11520
+[2] enable + start
+[3] 10000 images (can_load-paced, inter-image pipelined)...
+    ... 1/10000 ... 9217/10000
+    img 0..7: result == expected (OK)
+
+=== Result ===
+class match : 10000 / 10000
+latency     : 10896290 cyc ~108962 us wall-clock  [100MHz timer]
+PS time     : in-CDMA(blocking) 72% (7905500 cyc)   waiting-can_load 8% (950325 cyc)
+
+# 해석:
+#  - latency 10,896,290 cyc @100MHz timer = 108.9ms.
+#  - ~72%(7.9M cyc)가 100MHz blocking CDMA 입력 feed (가속기 클럭과 무관) → 가속기 2× 라도
+#    compute slice 만 압축되어 1.72× (not 2×).
+#  - PS time 은 'PS 가 어디서 시간을 쓰나'의 분해(PS-busy)일 뿐 HW 병목 확정 아님(main.c 주석 참조).
+#    단, clean 빌드라 latency/match 측정값 자체는 단단.
+#  - 다음 latency floor = CDMA feed → non-blocking/prefetch CDMA + 입력 bank>2 로 overlap 하면
+#    이론상 ~0.08s 근처. Winograd(conv2 compute↓)는 feed 푼 뒤 효과.

@@ -25,7 +25,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 module conv2_engine #(
-    // ★300MHz Step 2: PE broadcast(sel/pe_en/pe_x) 입력단에 추가할 register 단수(N).
+    // ★200MHz Step 2: PE broadcast(sel/pe_en/pe_x) 입력단에 추가할 register 단수(N).
     //   0 = 원래 타이밍 (Step2 off, Step1b 만 적용).
     //   1,2,... = sel/pe_en/pe_x 를 +N register 복제(max_fanout) + conv2_fsm DRAIN +N.
     //   compute 결과는 N 무관 bit-exact (latency 만 +N/image 증가). 자세한 내용 §7.5.
@@ -71,7 +71,7 @@ module conv2_engine #(
     //==========================================================================
     wire [1:0]  fsm_sel;
     wire [1:0]  fsm_col_sel;
-    // ★300MHz: shift_en(=state decode)이 8 ic 의 line_buffer/window CE-gen 으로 die 전역
+    // ★200MHz: shift_en(=state decode)이 8 ic 의 line_buffer/window CE-gen 으로 die 전역
     //   fanout → far-ic route 가 워스트(state→shift_en→lb2 CE, route 86%). max_fanout 으로
     //   decode 를 ic 클러스터 근처에 복제(zero-latency, 기능 불변; state 도 max_fanout=32 복제됨).
     (* max_fanout = 16 *) wire fsm_shift_en;
@@ -187,7 +187,7 @@ module conv2_engine #(
     end
 
     //==========================================================================
-    // 5.5 ★300MHz Step 1b: weight broadcast +1 register stage
+    // 5.5 ★200MHz Step 1b: weight broadcast +1 register stage
     //   weight-load broadcast(packed_w fo=192 / slot_id / load_en_dec)는 192 PE
     //   가 die 전역 DSP 컬럼에 깔려 route 가 die-spanning → WNS 워스트(-2.99).
     //   register 1단 추가 + 복제(max_fanout)로 긴 route 를 둘로 분할.
@@ -284,7 +284,7 @@ module conv2_engine #(
     endgenerate
 
     //==========================================================================
-    // 7.5 ★300MHz Step 2: PE broadcast 입력단 register pipeline (depth = PE_BC_DELAY)
+    // 7.5 ★200MHz Step 2: PE broadcast 입력단 register pipeline (depth = PE_BC_DELAY)
     //   compute 제어/activation broadcast (sel / pe_en / pe_x) 는 192 PE 로 die 전역
     //   분산 → route 지배 (WNS -2.72, DSP 94% die-spanning). PE 입력 직전에 register
     //   N 단 + 복제(max_fanout) 삽입하여 broadcast route 를 PE 클러스터 근처 replica

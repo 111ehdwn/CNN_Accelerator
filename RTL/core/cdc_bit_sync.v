@@ -4,7 +4,7 @@
 // Description:
 //   2-FF level synchronizer (clock-domain crossing). 느리게 변하는 level 신호를
 //   dst_clk 도메인으로 안전 전달. (1-cycle pulse 동기화 아님 — pulse 는 cdc_pulse_sync.)
-//   용도 (cnn_accelerator 300MHz overclock): enable (CSR 100 → datapath 300).
+//   용도 (cnn_accelerator 200MHz overclock): enable (CSR 100 → datapath 200).
 //////////////////////////////////////////////////////////////////////////////////
 module cdc_bit_sync #(
     parameter STAGES = 2

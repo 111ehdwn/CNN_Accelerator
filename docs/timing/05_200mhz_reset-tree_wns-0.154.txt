@@ -1,0 +1,19 @@
+# [STAGE 05] 200MHz impl + reset 복제 트리 (WNS −0.154)
+# 근거: 300MHz 최대 WNS 였던 reset net(−1.94, fo=41323)이 워스트에서 사라짐
+#       = rst_l1/rst_leaf 복제 트리 성공. 새 워스트 = wl pe_id→pe_load_en_dec(route 82%).
+#       (이 path 는 이후 phys_opt 가 닫음.)
+# source: report_timing_summary (impl_1)
+
+Setup :           44  Failing Endpoints,  Worst Slack       -0.154ns,  Total Violation       -3.072ns
+
+--- worst violated path ---
+Slack (VIOLATED) :        -0.154ns  (required time - arrival time)
+  Source:                 cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[4]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@2.500ns period=5.000ns})
+  Destination:            cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/pe_load_en_dec_r_reg[12]/R
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@2.500ns period=5.000ns})
+  Path Group:             clk_out3_cnn_accelerator_system_clk_wiz_0_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            5.000ns  (clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@5.000ns - clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@0.000ns)
+  Data Path Delay:        4.229ns  (logic 0.738ns (17.451%)  route 3.491ns (82.549%))
+  Logic Levels:           1  (LUT4=1)

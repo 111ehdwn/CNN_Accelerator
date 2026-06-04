@@ -411,8 +411,15 @@ OTHER 는 단일이 아닌 **다종 −1.6~−1.7 덩어리**: FC FSM(`pair_cnt/
 - timer = CSR(`clk_out1`=100MHz) wall-clock 카운터(RTL `csr_axi_slave_lite_..._csr.v` 확인, `us=cyc/100` 정확).
 - 188 요청은 clk_wiz 가 200MHz 로 스냅(MMCM: clk_out1=100 + clk_out2=200 이 VCO 고정 → clk_out3 정수분주만; 가능값 {200, 171.4, 166.7, 150, …}).
 
-### 13.7 다음 후보 — reset fanout
-300MHz 합성 시 conv2 broadcast(§13.2)를 닫은 뒤 남는 최대 WNS = reset net(`rst_sync_reg→BUFG→fo=41323→DSP/RSTB·register`, −1.94, route 85%, 1343 violating, die 전역). 경감안(§13.4-5 fallback): CDC 생성부 불변, `pe_cell` DSP RSTA/B/M/P 등 datapath self-flush register reset 제거(41323 큰 덩어리). en-gating+FILL 정합 보장. **변경 시 iverilog X-propagation 재검증 필수.**
+### 13.7 ★★ 200MHz 실 HW 작동 확정 (10000/10000, 108.9ms, WNS +0.011) — 2026-06-04
+300MHz 합성 시 conv2 broadcast(§13.2)를 닫은 뒤 남던 최대 WNS = reset net(`rst_sync_reg→BUFG→fo=41323→DSP/RSTB`, −1.94, route 85%, 1343 violating, die 전역). **3개 레버 누적으로 200MHz(5.0ns) 닫음:**
+1. **reset 복제 트리** (`RTL/cnn_accelerator.v`): `rst_sync → (*max_fanout=32*)rst_l1 → (*max_fanout=128*)rst_leaf → rst`. async-assert/sync-deassert 유지, max_fanout 으로 합성이 leaf~323 자동 복제→cluster 근처 배치→짧은 local net (BUFG 불필요). **−1.94 완전 제거.** 기능 불변(하류 `if(rst)` 그대로, X-leak 없음). ※ tie-0(§13.4-5 의 datapath reset 제거) 방식은 기각 — 트리가 기능 불변이라 더 안전.
+2. **conv2 shift_en max_fanout** (`RTL/conv2/conv2_engine.v` line74): `(*max_fanout=16*) wire fsm_shift_en`. reset 닫은 뒤 새 워스트 = conv2 FSM `state`→shift_en decode→8 ic line_buffer CE (route 86%, far-ic 4–7; line_buffer.mem 이 FF 합성→CE=shift_en&(ptr==addr), shift_en 만 max_fanout 없었음). zero-latency 복제 → failing **31→1**.
+3. **`phys_opt_design -directive AggressiveExplore`**: default phys_opt 는 −0.154→−0.102 에서 plateau("WNS did not improve"). AggressiveExplore 가 −0.098→**+0.011**(0 failing) 마감.
+- **검증**: iverilog `tb_cnn_accelerator_multi` 40/40 + `tb_system_axi_multi` 10/10 bit-exact (둘 다 attribute-only).
+- **★ 재현성**: 3번 interactive phys_opt → 그 in-memory design 에서 바로 write_bitstream, 또는 impl strategy 에 AggressiveExplore post-route phys_opt 를 넣어야 함(안 넣고 impl 재실행 시 −0.098 복귀).
+- **★ +0.011 = positive @ slow(signoff) corner = 정식 MET** (이전 188설정/실모드200 의 −1.94 silent fail 과 다름). 마진 더 원하면 conv2 max_fanout 16→8.
+- **★ HW 실측 확정 (2026-06-04): class 10000/10000, latency 10,896,290 cyc = 108.9ms @100MHz timer.** baseline(100MHz) 0.188s 대비 **1.72×**, 150MHz(0.128s) 대비 1.17×. 2×가 아닌 이유: profile in-CDMA(blocking) **72%**(7.9M cyc) — CDMA feed 가 100MHz 도메인(클럭무관)이라 가속기 2×는 compute slice 만 압축. **다음 floor = CDMA feed**: non-blocking/prefetch CDMA + 입력 bank>2 로 overlap 하면 ~0.08s 근처(이론). Winograd(conv2 compute↓)는 feed 푼 뒤 효과. (profile=PS-busy 분해라 시사적; 측정값은 clean 빌드라 단단.)
 
 ---
 *관련: `docs/ip_spec/block_memory_generator.md`(BMG L=2/REGCEB), `docs/conv1_timing.md`, `RTL/conv2/conv2_timing.md`, memory `overclock-300mhz-kickoff`.*

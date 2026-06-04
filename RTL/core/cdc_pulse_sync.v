@@ -14,9 +14,9 @@
 //     src: pulse_in 마다 toggle FF(tgl) 반전 → level 로 인코딩 (edge = event)
 //     dst: tgl 을 2-FF 동기(메타스테이블 resolve) + 1 지연, 상위 2단 XOR 로 edge 복원
 //
-//   용도 (cnn_accelerator 300MHz overclock CDC):
-//     start / img_ready          : src=aclk(100) → dst=clk(300)   slow→fast (3배카운트 방지)
-//     img_done / input_consumed  : src=clk(300)  → dst=aclk(100)  fast→slow (펄스 손실 방지)
+//   용도 (cnn_accelerator 200MHz overclock CDC):
+//     start / img_ready          : src=aclk(100) → dst=clk(200)   slow→fast (2배카운트 방지)
+//     img_done / input_consumed  : src=clk(200)  → dst=aclk(100)  fast→slow (펄스 손실 방지)
 //
 //   ※ aclk 와 clk 는 같은 MMCM(clk_wiz) 출력이라 위상 정렬(3:1)이지만, 본 동기화기는
 //     비동기 가정으로도 안전 (2-FF + toggle). 단 multi-bit 버스(BMG Port A)는 동기화기로

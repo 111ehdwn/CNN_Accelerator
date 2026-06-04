@@ -26,7 +26,7 @@
 //     [255:128] : odd  output column weights, 16ch
 //
 //   BRAM read latency:
-//     poolfc (input) BRAM = 2 cycle (L=2, 300MHz)
+//     poolfc (input) BRAM = 2 cycle (L=2, 200MHz)
 //     weight BRAM         = 2 cycle (L=2, Primitive Output Register + REGCEB tie1)
 //////////////////////////////////////////////////////////////////////////////////
 
@@ -140,7 +140,7 @@ module fc_engine #(
     //   (구: fc_weight_bram L=1 + fabric reg fcw_doutb_r 로 +1 했으나, IP output reg 로
     //    통일 — conv weight BMG 와 동일 방식. REGCEB=1 로 마지막 weight(pair4 sp143) propagation
     //    보장. abrupt-stop(comp_v drop) 에서 REGCEB 미노출이면 ENB-gated → 누락; 그래서 tie1.)
-    //   L=2 output register 는 300MHz weight read 타이밍도 닫는다 (clock-to-out ~0.45ns).
+    //   L=2 output register 는 200MHz weight read 타이밍도 닫는다 (clock-to-out ~0.45ns).
 
     // fcw_doutb = 16ch × 32b SIMD-A (gen 그대로). fc_pe_array 가 lane 별
     // [ch*32 +: 25] 를 pe_cell.packed_w 로 직결 (구: even/odd 분리+재조립 제거).

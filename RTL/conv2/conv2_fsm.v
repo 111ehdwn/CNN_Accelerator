@@ -86,7 +86,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 module conv2_fsm #(
-    // ★300MHz Step 2: conv2_engine 의 PE_BC_DELAY 와 동일 N.
+    // ★200MHz Step 2: conv2_engine 의 PE_BC_DELAY 와 동일 N.
     //   PE 입력 broadcast 를 +N register 지연하면 datapath drain 도 +N → DRAIN 연장.
     parameter PE_BC_DELAY = 0
 ) (
@@ -150,9 +150,9 @@ module conv2_fsm #(
     localparam [2:0] COMPUTE_WRAP     = 3'd6;
     localparam [2:0] DRAIN            = 3'd7;
 
-    (* max_fanout = 32 *) reg [2:0] state;   // ★300MHz: 192 PE broadcast → 복제(replication)로 route 단축
+    (* max_fanout = 32 *) reg [2:0] state;   // ★200MHz: 192 PE broadcast → 복제(replication)로 route 단축
 
-    // ★300MHz Step 2: DRAIN 종료 카운트 = 11 + PE_BC_DELAY.
+    // ★200MHz Step 2: DRAIN 종료 카운트 = 11 + PE_BC_DELAY.
     //   PE 입력 +N register 로 (PE input → c2pool mem update) 파이프라인이 12→(12+N)
     //   cycle 이 되므로, 마지막 write 가 output_pixel_cnt/write_addr reset 전에 끝나도록
     //   DRAIN 을 N cycle 연장. drain_cnt 5-bit(0~31) → N ≤ 20 (overflow-safe).
@@ -164,7 +164,7 @@ module conv2_fsm #(
     //   output_pixel_cnt 는 port 로 선언됨 (datapath 공유). 본 모듈 안에서는 일반
     //   reg 처럼 사용.
     //==========================================================================
-    (* max_fanout = 32 *) reg [1:0] kw_cnt;  // 0~2; sel=kw_cnt → 192 PE broadcast (★300MHz replication)
+    (* max_fanout = 32 *) reg [1:0] kw_cnt;  // 0~2; sel=kw_cnt → 192 PE broadcast (★200MHz replication)
     reg [1:0] wrap_cnt;           // 0~2 (COMPUTE_WRAP 내부 cycle 카운터)
     reg [4:0] drain_cnt;          // 0~DRAIN_LAST(=11+N); DRAIN 길이 = 12+N cycle (pipeline depth)
 

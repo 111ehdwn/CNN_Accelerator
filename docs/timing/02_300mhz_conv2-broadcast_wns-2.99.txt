@@ -1,0 +1,27 @@
+# [STAGE 02] 300MHz 초기 impl — conv2 broadcast fanout (WNS −2.99)
+# 근거: weight/control broadcast 가 192 PE 로 die 전역 fanout → route 지배.
+# 결정: broadcast 를 register-pipeline (Step1 max_fanout, Step1b weight +1reg,
+#       Step2 PE_BC_DELAY) + weight_loader nested-multiply→accumulator.
+# source: report_clock_interaction (impl_1, xc7a100t-1)
+
+--- worst violated path ---
+Slack (VIOLATED) :        -2.990ns  (required time - arrival time)
+  Source:                 cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@1.667ns period=3.333ns})
+  Destination:            cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][15]/CE
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@1.667ns period=3.333ns})
+  Path Group:             clk_out3_cnn_accelerator_system_clk_wiz_0_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            3.333ns  (clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@3.333ns - clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@0.000ns)
+  Data Path Delay:        6.104ns  (logic 0.828ns (13.565%)  route 5.276ns (86.435%))
+  Logic Levels:           3  (LUT3=1 LUT4=1 LUT6=1)
+Slack (VIOLATED) :        -2.990ns  (required time - arrival time)
+  Source:                 cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/wl_inst/pe_id_reg[5]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@1.667ns period=3.333ns})
+  Destination:            cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_pe_op[0].gen_pe_ic[1].gen_pe_kh[1].pe_inst/gen_wreg.w_regs_reg[2][2]/CE
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@1.667ns period=3.333ns})
+  Path Group:             clk_out3_cnn_accelerator_system_clk_wiz_0_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            3.333ns  (clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@3.333ns - clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@0.000ns)
+  Data Path Delay:        6.104ns  (logic 0.828ns (13.565%)  route 5.276ns (86.435%))
+  Logic Levels:           3  (LUT3=1 LUT4=1 LUT6=1)

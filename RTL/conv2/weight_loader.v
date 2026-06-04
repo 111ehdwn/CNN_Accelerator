@@ -69,7 +69,7 @@ module weight_loader_conv2 (
     //==========================================================================
     // PE broadcast
     //==========================================================================
-    (* max_fanout = 32 *) output reg  [7:0]  pe_id,    // 0~191 (target PE) ★300MHz: 192 PE broadcast 복제
+    (* max_fanout = 32 *) output reg  [7:0]  pe_id,    // 0~191 (target PE) ★200MHz: 192 PE broadcast 복제
     (* max_fanout = 32 *) output reg  [1:0]  slot_id,  // 0~2 (K_col slot, = kw)  ★ replication
     output wire [24:0] packed_w,         // 25-bit Aport (c2w_doutb 하위 25-bit 직결)
     (* max_fanout = 32 *) output reg     pe_load_en     // 1-cycle pulse per PE  ★ replication
@@ -118,7 +118,7 @@ module weight_loader_conv2 (
     //
     //   *3 = (x << 1) + x (shift + adder, cheap)
     //
-    //   ★300MHz: 이 nested-multiply 조합경로(6-level CARRY4, logic 3.08ns)가 WNS
+    //   ★200MHz: 이 nested-multiply 조합경로(6-level CARRY4, logic 3.08ns)가 WNS
     //   워스트(-2.187, ic_cnt→c2w_addrb)였음. addr/pe_id 는 LOADING 동안 0..575 /
     //   0..191 로 단조 증가만 하므로 multiply 대신 increment accumulator(addr_seq /
     //   pe_id_seq, §4.5)로 대체 → 조합깊이 6→1. nested 카운터는 is_last_addr 전용 유지.
@@ -209,7 +209,7 @@ module weight_loader_conv2 (
     end
 
     //==========================================================================
-    // 4.5 ★300MHz: addr/pe_id increment accumulator (nested-multiply 대체)
+    // 4.5 ★200MHz: addr/pe_id increment accumulator (nested-multiply 대체)
     //   §5 nested 카운터와 lockstep 으로 증가 → addr_seq@T == 옛 addr_calc@T,
     //   pe_id_seq@T == 옛 pe_id_calc@T (bit-exact, 타이밍 동일).
     //   LOADING 진입 시 0, !is_last 동안 매 cycle +1, kw wrap(kw_cnt==2) 마다
@@ -239,7 +239,7 @@ module weight_loader_conv2 (
             c2w_addrb <= 10'd0;
         end else begin
             c2w_enb   <= (state == LOADING);
-            c2w_addrb <= addr_seq;       // ★300MHz: addr_calc(multiply) → addr_seq(accumulator)
+            c2w_addrb <= addr_seq;       // ★200MHz: addr_calc(multiply) → addr_seq(accumulator)
         end
     end
 
@@ -268,7 +268,7 @@ module weight_loader_conv2 (
             load_en_d2 <= 1'b0;
         end else begin
             // Stage 1: 현재 cycle 카운터 → 1 cycle 후 stage 1
-            pe_id_d1   <= pe_id_seq;     // ★300MHz: pe_id_calc(multiply) → pe_id_seq(accumulator)
+            pe_id_d1   <= pe_id_seq;     // ★200MHz: pe_id_calc(multiply) → pe_id_seq(accumulator)
             slot_id_d1 <= slot_id_calc;
             load_en_d1 <= (state == LOADING);
 
