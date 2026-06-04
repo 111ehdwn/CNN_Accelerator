@@ -8,6 +8,12 @@
  *     - weight     : conv1/conv2/fc 전부 SIMD-packed 헤더 그대로 **direct write** (★ 변환 금지)
  *                    fcw 512b (16ch × 32b SIMD-A/word) — 32→512 upsizer 가 16개씩 packing
  *     - input      : test_images = pre-packed uint32 (gen 산출) → word 그대로 전송
+ *
+ *   ★ 듀얼클럭(overclock): 가속기 datapath(conv1/2·maxpool·fc) = clk_out3 (주파수는 clk_wiz/BD
+ *     에서 설정 — firmware 는 모름·무관), PS/AXI/CSR/CDMA = clk_out1 100MHz. firmware 무변경.
+ *   ★ latency timer(CSR 0x08/0x0C)는 clk_out1 100MHz 도메인 = wall-clock. us = cyc/100 (정확).
+ *   ※ 아래 profile(t_write/t_canload)은 'PS 가 어디서 시간을 쓰나'의 단순 분해(PS-busy)일 뿐,
+ *     HW 병목 판정 아님(overlap/pipeline 미반영).
  */
 #include "xparameters.h"   /* XPAR_*_BASEADDR */
 #include "xil_io.h"
@@ -36,6 +42,13 @@
 #define CSR_STATUS    0x4U   /* [0]done [1]can_load [15:2]img_cnt (result→bram_output) */
 #define CSR_TIMER_LO  0x8U
 #define CSR_TIMER_HI  0xCU
+
+/* ★ 진단 플래그: 1 이면 이미지 CDMA 전송량을 784B→16B 로 줄임 (CDMA 자체는 계속 돌려
+ *   spacing/handshake 유지 → skip 방식의 hang 회피). 전송시간(t_write)이 ~549→~350 으로
+ *   줄어드는 만큼만 latency 가 빠지면 = 그 부분이 feed 비용. (skip 만큼 깨끗하진 않음.)
+ *   firmware-only: 비트스트림 그대로, ELF 만 재빌드. 측정 후 0 으로 되돌릴 것.
+ *   ※ 더 깨끗한 비교: '오버클럭 없는(100MHz) DMA 버전' latency 와 오버클럭(0.188s) 비교. */
+#define FEED_TEST  0
 
 /* CTRL bits */
 #define CTRL_EN    0x1U
@@ -87,7 +100,7 @@ static void write_image(u32 img)
     u32 bank = img & 1U;
     cdma_xfer((u32)(UINTPTR)&test_images[img * IN_WORDS],   /* DDR source */
               INPUT_BASE + bank * 256U * 4U,                /* input BRAM bank dst */
-              IN_WORDS * 4U);                               /* 784 byte */
+              FEED_TEST ? 16U : (IN_WORDS * 4U));           /* 784B; FEED_TEST 면 16B (전송비용 최소, CDMA spacing 유지) */
 }
 
 int main(void)
@@ -137,7 +150,7 @@ int main(void)
 
         /* 빈 bank(img&1) 에 이미지 write + img_ready pulse */
         ta = Xil_In32(CSR_BASE + CSR_TIMER_LO);
-        write_image(img);                      /* 196 word 전송 */
+        write_image(img);                      /* FEED_TEST=1 이면 내부에서 16B 만 전송(CDMA·spacing 유지, hang 회피) */
         csr_ctrl(CTRL_EN | CTRL_IMG);          /* img_ready pulse → inflight++ */
         tb = Xil_In32(CSR_BASE + CSR_TIMER_LO);
         t_write += tb - ta;
@@ -175,24 +188,28 @@ int main(void)
     }
 
     /* ---- 5. 결과 + latency (48-bit timer; N<10000 이면 미정지 → snapshot) ---- */
+    /* timer = CSR(clk_out1 100MHz) wall-clock 카운터. us = cyc/100 (정확).
+     * 가속기 클럭(clk_out3)이 빠를수록 같은 work 가 더 적은 timer cyc 에 끝남. */
     u32 t_lo = Xil_In32(CSR_BASE + CSR_TIMER_LO);
     u32 t_hi = Xil_In32(CSR_BASE + CSR_TIMER_HI) & 0xFFFFU;
     u32 us   = (t_hi == 0U) ? (t_lo / 100U) : 0xFFFFFFFFU;
 
     xil_printf("\r\n=== Result ===\r\n");
+#if FEED_TEST
+    xil_printf("[FEED_TEST] CDMA = 16B only (data garbage, class match 무의미). latency 만 참고.\r\n");
+#endif
     xil_printf("class match : %u / %u\r\n", (unsigned)matched, (unsigned)prev_cnt);
-    xil_printf("latency     : %u cyc (hi=%u) ~%u us @100MHz%s\r\n",
-               (unsigned)t_lo, (unsigned)t_hi, (unsigned)us,
+    xil_printf("latency     : %u cyc ~%u us wall-clock  [100MHz timer]%s\r\n",
+               (unsigned)t_lo, (unsigned)us,
                (N_IMAGES == 10000U) ? "" : " [snapshot]");
-    /* [profile] PS image-write vs can_load(가속기 소비) 대기 → 잔여 병목 자동 판정 */
+    if (t_hi != 0U)
+        xil_printf("              (timer 48-bit hi=%u - overflow / not stopped)\r\n", (unsigned)t_hi);
+    /* ★ 'PS 가 어디서 시간을 쓰나'의 단순 분해(PS-busy)일 뿐 — HW 병목 판정 아님. */
     u32 denom = (t_lo >= 100U) ? (t_lo / 100U) : 1U;       /* % 계산 (u64 회피) */
-    u32 pw = t_write   / denom;                            /* PS 전송 비중 */
-    u32 pc = t_canload / denom;                            /* 가속기 대기 비중 */
-    xil_printf("profile     : PS-write %u%% (%u cyc)   accel-wait %u%% (%u cyc)\r\n",
+    u32 pw = t_write   / denom;                            /* PS 가 blocking CDMA 안에 있던 비중 */
+    u32 pc = t_canload / denom;                            /* PS 가 can_load(빈 bank) 기다린 비중 */
+    xil_printf("PS time     : in-CDMA(blocking) %u%% (%u cyc)   waiting-can_load %u%% (%u cyc)\r\n",
                (unsigned)pw, (unsigned)t_write, (unsigned)pc, (unsigned)t_canload);
-    xil_printf("bottleneck  : %s\r\n",
-               (pw > pc) ? "PS transfer        -> DMA"
-                         : "accelerator (conv1/conv2) -> 300MHz / Winograd");
 
     return 0;
 }

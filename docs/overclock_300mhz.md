@@ -7,6 +7,9 @@ CNN Accelerator(Arty A7-100T, `xc7a100t-csg324-1`, speed grade **−1**)의 PL d
 - **목표:** 가속기 datapath만 300MHz → wall-clock ~3× 단축(~0.063s 기대). **firmware 무변경**(cycle 거동 동일, timer가 세는 100MHz cycle 수가 ~1/3로 줄어 wall-clock 단축).
 - **데이터패스 300MHz prep는 이미 완료**(BMG L=2 + 파이프라이닝, iverilog 검증). 이번 작업은 **클럭 분리 + 클럭도메인횡단(CDC) + timing 제약**.
 
+> ### ⚠️ 2026-06-04 목표 전환: 300MHz → **190MHz (1.9×)**
+> N=1(Step1b+Step2) 빌드에서 conv2 broadcast 는 닫혔으나(워스트에서 사라짐), reset fanout(fo=41323, −1.94) + FSM/handshake 잔여(−1.7)가 die 전역에 분포(DSP 94%, floorplan 불가). 실효 최대주파수 ≈ **~190MHz**(binding=reset 5.276ns→189.6MHz). 300(3.33ns) closure 는 비현실적 → **190MHz 타협 확정**(여기까지가 MHz ROI 최대 구간; 그 다음 best 레버 = **Winograd**, §13.5). 상세 §13. (§1~§12 의 CDC/BD/XDC 골격 유효 — 단 190 은 100 과 **1.9:1 비정수**라 write-bus 제약을 multicycle→`set_max_delay -datapath_only`로 변경, §13.4.)
+
 ---
 
 ## 1. 왜 "가속기만" 300MHz인가 — 전체 오버클럭은 불가/무의미
@@ -359,6 +362,58 @@ conv2_engine 에서 `wl_packed_w`/`wl_slot_id`/`pe_load_en_dec` 를 +1 register(
 - [ARTY MicroBlaze Running at 100MHz — Digilent Forum](https://forum.digilent.com/topic/1993-arty-microblaze-running-at-100mhz/)
 - [AXI SmartConnect Performance/Fmax (AMD)](https://download.amd.com/docnav/documents/ip_attachments/smartconnect.html)
 - [AXI Interconnect v2.1 — PG059 (AMD)](https://docs.amd.com/r/en-US/pg059-axi-interconnect)
+
+---
+
+## 13. 200MHz(2×) 전환 — 결정 기록 + 근거 분석 (2026-06-04)
+
+### 13.1 결정 (사용자, 2026-06-04)
+**300MHz 목표를 190MHz로 전환.** 근거: Step1b+Step2(broadcast 파이프라인) 후에도 reset/FSM/handshake 가 die 전역에 −1.7~−1.94ns 로 분포해 실효 Fmax ≈ **189.6MHz**(binding = reset 5.276ns). 300(3.33ns) closure 는 다전선 die-spanning 경로를 전부 내려야 해 비현실적 — **여기까지가 MHz 의 ROI 최대 구간**, 그 위는 diminishing returns. 190MHz 도 conv2 throughput floor(1799 cyc/img) 기준 **0.188s → ~0.099s (1.9×, 누적 ~11×)**, firmware 무변경.
+- **190 vs 188**: reset 경로 5.276ns → 190MHz(5.263ns)에선 **−0.013** (phys_opt 로 긁어야 닫힘), **188MHz(5.319ns)면 +0.043 으로 깔끔**. 성능차 1MHz(무시가능) → 마진 원하면 188 권장. FC/handshake(−1.715, 5.048ns)는 양쪽 다 +0.2 여유로 통과 → reset 만 binding.
+- **다음 best 레버 = Winograd** (MHz 아닌 알고리즘 복잡도 ↓ — conv2 1799 cyc/img 가 throughput floor). §13.5.
+
+### 13.2 N=1 (Step1b+Step2) Vivado 결과 + 진단 (routed, 2026-06-04)
+WNS 추이: 1차 −2.99 → Step1(max_fanout+phys_opt) −2.454 → **Step1b+Step2 N=1 −2.187** (WHS +0.052, WPWS +0.206; setup 만 실패). **conv2 PE broadcast(sel/pe_en/x→192 PE)는 워스트 top15 에서 사라짐 = Step1b/Step2 성공.** 새 워스트는 전혀 다른 곳:
+
+`report_design_analysis -setup -max_paths 15` 워스트:
+- **#1,2,4 (−2.187): weight_loader 주소연산** `ic_cnt→…CARRY4×4…→c2w_addrb_reg[9]/D`. nested-multiply `(((oc*8)+ic)*3+kh)*3+kw` 가 6-level CARRY4(logic 3.08ns/56%). → **수정완료**(§13.3).
+- **#3,5~15 (−1.94~−1.74): reset net** `rst_sync_reg→BUFG→(fo=41323)→DSP/RSTB·register`. route 85%.
+
+weight_loader 제외(=고친 후) 잔여 분류 (top1500 violating sample):
+| 분류 | count | worst |
+|---|---|---|
+| weight_loader (제외) | 5 | −2.187 |
+| **reset-net** (`rst_sync` 출발) | **1343** | **−1.943** |
+| **OTHER** (reset·wl 아님) | **152** | **−1.715** |
+
+OTHER 는 단일이 아닌 **다종 −1.6~−1.7 덩어리**: FC FSM(`pair_cnt/s_cnt→state·fcw BMG addr` −1.72/−1.67), conv2 `state→pe_x_sr`(col_sel mux→Step2 reg 입력 −1.68), conv2 `sel_sr_rep→DSP/A`(Step2 broadcast 잔여, 복제됨 −1.60), conv2 `rdone→conv1 fsm CE`(핸드셰이크 −1.59).
+
+**실효 Fmax 산수** (path delay = 3.333 − slack): wl 5.52 / reset 5.28 / OTHER 5.05ns. fix 누적 시 천장 = wl고침→reset(190MHz)→OTHER(198MHz)→다음 tier(~200–208MHz). → **~200MHz 벽** 확정. 이게 §11.5 가 예고한 "−1.5ns 벽".
+
+### 13.3 적용한 RTL 수정
+- **weight_loader 주소연산 → increment accumulator** (`RTL/conv2/weight_loader.v` §4.5): addr/pe_id 는 LOADING 중 0→575/0→191 단조증가만 하므로 nested-multiply 제거하고 `addr_seq`/`pe_id_seq` accumulator(+1)로 대체. 조합깊이 6→1. nested 카운터는 is_last_addr 전용 유지. **iverilog bit-exact 확인**(tb_cnn_accelerator_multi 40/40, conv2-direct 40/40 0/23040; addr/pe_id 시퀀스 동일). 1회성 로딩이라 거동 영향 0.
+- Step1b/Step2(`PE_BC_DELAY=1`)는 200MHz 에서도 유지(bit-exact, +1cyc/img, 마진 도움).
+
+### 13.4 190MHz closure 작업 (Vivado)
+1. **clk_wiz**: `clk_out3` Requested **300→190 MHz** (마진 원하면 188). clk_out1=100, clk_out2=200 MIG ref 유지. 출력 port 명 불변 → 클럭 이름·XDC get_clocks 그대로.
+2. **XDC** (`Arty-a7-100-Master_v2.xdc`): 190 은 100 과 **1.9:1 비정수** → write-bus 를 multicycle 대신 **`set_max_delay -datapath_only 10.000 -from $CLK100 -to $CLK_ACC`** (데이터패스 ≤ 1 slow period, 비율 무관, idempotent+stable 라 안전, -datapath_only 가 hold 자동 충족). false_path(accel→100) 유지. **적용완료.** (※ 200(2:1) 로 갈 거면 multicycle -setup 2 -hold 1 로 회귀.)
+3. **RTL**: weight_loader fix(§13.3) + Step1b/Step2(`PE_BC_DELAY=1`) 복붙. (190 에서 weight_loader 미수정 시 5.52ns→−0.26 fail 이므로 fix 필수.)
+4. **impl 전략**: `Performance_Explore`(또는 ExtraTimingOpt) + post-route `phys_opt_design`. 190 에서 binding 은 reset −0.013 뿐 → 전략/phys_opt 로 닫힐 듯(안 되면 clk 188 로). **route 지배라 진짜 판정은 post-route(impl) — synth-only timing 은 낙관적, 신뢰 말 것.**
+5. **(불필요 예상이나 fallback) reset fanout 경감**: 만약 reset 이 phys_opt 로도 안 닫히면 — CDC(생성부) 불변, `pe_cell` DSP RSTA/B/M/P 등 datapath self-flush register reset 제거(41323 큰 덩어리). en-gating+FILL 정합 보장. **iverilog X-propagation 재검증 필수.**
+
+> **다음 작업자에게**: 190(or 188) impl → WNS≥0 면 HW(N=100→10000, class match 10000/10000 유지 + wall-clock ~0.099s 확인) → **그 다음은 Winograd(§13.5)**. 300 은 §13.2 OTHER 다전선이라 보류(ROI 낮음).
+
+### 13.5 다음 best 레버: Winograd (MHz 졸업 후)
+190MHz 로 datapath 클럭은 한계 도달 → 추가 가속은 **알고리즘 복잡도**에서. conv2 가 throughput floor(1799 cyc/img, 3×3 conv 의 9-MAC/output). **Winograd F(2×2, 3×3)** 은 4 output 을 4×4 tile 로 묶어 16 MAC 으로 처리(naive 36 대비 **2.25× 곱셈 감소**) → conv2 cycle/img 대폭 ↓. 참고자료 `docs/pdfs/Winograd`. 적용 시 고려: (a) input/weight transform(상수 행렬, INT8→transform 후 비트폭 증가 주의), (b) DSP packing 재설계(현 SIMD INT8×2 packing 과 호환성), (c) conv1(5×5?)·fc 는 별개. → conv2 우선, 별도 설계문서로.
+
+### 13.6 ★ HW 측정 결과 — 오버클럭은 적용됐으나 latency 불변 (feed-bound 판명, 2026-06-04)
+clk_wiz `clk_out3` 가 188 요청 → **200MHz 로 스냅**(`report_clocks`: clk_out3 period 5.000ns, ×2). impl WNS +0.04 로 닫힘, HW **class match 10000/10000** ✅. **그러나 latency = 18,771,076 cyc @100MHz timer = 0.188s = baseline 그대로** (오버클럭 전후 0% 변화).
+- **timer 검증**: CSR(`csr_axi_1`)는 `clk_out1`=100MHz 도메인의 wall-clock 카운터(RTL `csr_axi_slave_lite_..._csr.v`: 100MHz 매 cycle +1). `us=cyc/100` 정확. → 측정 신뢰 가능, 오버클럭이 wall-clock 을 안 줄인 게 사실.
+- **~~feed-bound 실증(100 vs 200 동일 18.77M)~~ → ★오염 판명, §13.7 로 정정**: 그 200MHz 비교가 **silent timing fail 상태의 broken 빌드**였음(아래 §13.7). 실제로는 100MHz=accel-bound, 150MHz=CDMA-bound 로 클럭이 100→150 에서 도움됨.
+- **결론(병목 모델 정정)**: 가속기 100→200MHz(2×)인데 wall-clock 0 변화 = **compute-bound 아님 → PS feed-bound @100MHz**. firmware 루프가 `poll(can_load)+blocking CDMA(196w)+img_ready` 직렬 ≈ **1877 cyc/img @100MHz**. baseline 은 conv2(1799)≈feed(1877) **공동제약**(="가속기-bound" 판정은 아슬한 것)이라, 가속기만 올리니 feed(100MHz)가 floor 로 노출. profile "accel-wait 63%"는 can_load 대기(feed/handshake 페이싱)이지 순수 compute 아님.
+- **재우선순위**: **오버클럭·Winograd 는 현재 latency 를 못 줄임**(가속기는 이미 feed 보다 빠름). 다음 레버 = **100MHz 입력 feed 파이프라인**: blocking CDMA 를 앞서 달리게(multi-buffer / SG-queue), 입력 bank >2, can_load 핸드셰이크 round-trip 축소 → 목표 <900 cyc/img @100MHz(200MHz 가속기 매칭). Winograd(conv2 compute↓, §13.5)는 feed 를 먼저 풀어 다시 compute-bound 가 된 뒤에야 효과.
+- **확정 실험(선택)**: clk_out3=100 vs 200 에서 profile `t_canload` 비교 — 거의 같으면 feed-bound 확정. (2×→0 만으로도 사실상 결론.)
+- firmware(`vitis/main.c`) 주석·출력·bottleneck 메시지를 이 발견에 맞게 정정(clk 200MHz, feed-bound, "다음=feed 파이프라인").
 
 ---
 *관련: `docs/ip_spec/block_memory_generator.md`(BMG L=2/REGCEB), `docs/conv1_timing.md`, `RTL/conv2/conv2_timing.md`, memory `overclock-300mhz-kickoff`.*

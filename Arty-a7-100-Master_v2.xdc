@@ -216,22 +216,31 @@ set_property -dict { PACKAGE_PIN C2    IOSTANDARD LVCMOS33 } [get_ports { ck_rst
 #set_property -dict { PACKAGE_PIN A15   IOSTANDARD LVCMOS33     } [get_ports { isns0v95_p }]; #IO_L8P_T1_AD10P_15 Sch=ad_p[10]
 
 ##################################################################
-## 300MHz Overclock — 클럭도메인횡단(CDC) timing 제약
-##   docs/overclock_300mhz.md §7 / 부록 A.3 참조.
-##   가속기 clk_out3(300MHz) <-> CSR·AXI clk_out1(100MHz), 같은 MMCM 위상정렬(3:1).
-##   ※ 두 클럭은 related(같은 MMCM) — set_clock_groups -asynchronous 금지
-##     (100->300 write 버스가 동기 위상정렬에 의존).
+## Overclock — 클럭도메인횡단(CDC) timing 제약   (docs/overclock_300mhz.md §7/§13)
+##   ★2026-06-04: 300MHz 미달(reset/FSM die-spanning 벽) → 가속기 clk_out3 만 올림.
+##   가속기 clk_out3 <-> CSR·AXI clk_out1(100MHz), 같은 MMCM(clk_wiz_0).
+##
+##   ★clk_out3 주파수는 clk_wiz IP(Output Clocks 탭)에서 설정 — 이 XDC 아님.
+##     ★MMCM 제약: clk_out1=100 + clk_out2=200(MIG ref)이 VCO 고정 → clk_out3 는 그 VCO
+##     의 ‘정수분주’만 가능 → 달성치 {200(÷5), 171.4(÷7), 166.7(÷6), 160, 150...}. **188 불가**.
+##     "188 요청"해도 200 으로 스냅됨. (현재 feed-bound 라 클럭은 latency 무영향 →
+##      마진 위해 166.7/171.4 권장; feed 풀려 accel-bound 되면 클럭 ↑. docs §13.6.)
+##   ※ 두 클럭은 related(같은 MMCM) — set_clock_groups -asynchronous 금지(write 버스 timed 유지).
+##   ※ 아래 제약은 clk_out3 주파수 무관(freq-agnostic) — 200/171/166 무엇으로 재합성해도 그대로.
 ##################################################################
 set CLK100 [get_clocks clk_out1_cnn_accelerator_system_clk_wiz_0_0]
-set CLK300 [get_clocks clk_out3_cnn_accelerator_system_clk_wiz_0_0]
+set CLK_ACC [get_clocks clk_out3_cnn_accelerator_system_clk_wiz_0_0]
 
-## 100 -> 300 (slow->fast): AXI BRAM Ctrl -> 가속기 BMG Port A write 버스(multi-bit).
-##   데이터가 100MHz 한 주기(=300 기준 3 cycle) 동안 안정 → setup 을 3번째 300 엣지로 완화
-##   (idempotent 3회 write). enable/start/img_ready 동기화기 첫 FF(quasi-static)도 함께 완화.
-set_multicycle_path -setup 3 -from $CLK100 -to $CLK300
-set_multicycle_path -hold  2 -from $CLK100 -to $CLK300
+## 100 -> accel (slow->fast): AXI BRAM Ctrl -> 가속기 BMG Port A write 버스(multi-bit).
+##   ★190MHz 는 100 과 1.9:1 (비정수) → multicycle(정수배 전제) 부적합.
+##   데이터/addr/we 가 100MHz 한 주기(10ns) 동안 안정 + idempotent write 이므로,
+##   set_max_delay -datapath_only 로 "데이터패스 ≤ 10ns"(=한 slow period) 만 보장하면
+##   비율 무관하게 안전(어느 accel 엣지에 잡혀도 같은 값). -datapath_only 가 clock skew
+##   제거 → hold 도 자동 충족. (200MHz 정수배면 multicycle -setup 2 -hold 1 로 회귀 가능.)
+##   enable/start/img_ready 동기화기 첫 FF 도 이 범위로 함께 완화.
+set_max_delay -datapath_only 10.000 -from $CLK100 -to $CLK_ACC
 
-## 300 -> 100 (fast->slow): 이 방향 fabric 경로는 img_done/input_consumed 의
+## accel -> 100 (fast->slow): 이 방향 fabric 경로는 img_done/input_consumed 의
 ##   toggle pulse 동기화기(2-FF) 입력뿐 → CDC 로 처리(메타는 2-FF+ASYNC_REG 흡수,
 ##   정확한 cycle 무의미). fast->slow coincident-edge hold 위험 회피.
-set_false_path -from $CLK300 -to $CLK100
+set_false_path -from $CLK_ACC -to $CLK100

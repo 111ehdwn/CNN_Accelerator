@@ -117,20 +117,19 @@ module weight_loader_conv2 (
     //     + kw: 10-bit (max 575 < 1024)
     //
     //   *3 = (x << 1) + x (shift + adder, cheap)
+    //
+    //   ★300MHz: 이 nested-multiply 조합경로(6-level CARRY4, logic 3.08ns)가 WNS
+    //   워스트(-2.187, ic_cnt→c2w_addrb)였음. addr/pe_id 는 LOADING 동안 0..575 /
+    //   0..191 로 단조 증가만 하므로 multiply 대신 increment accumulator(addr_seq /
+    //   pe_id_seq, §4.5)로 대체 → 조합깊이 6→1. nested 카운터는 is_last_addr 전용 유지.
     //==========================================================================
-    wire [9:0] addr_calc = (((oc_pair_cnt * 4'd8) + ic_cnt) * 2'd3 + kh_cnt) * 2'd3 + kw_cnt;
+    reg [9:0] addr_seq;     // = ((oc*8+ic)*3+kh)*3+kw 를 increment 로 추적 (옛 addr_calc)
+    reg [7:0] pe_id_seq;    // = (oc*8+ic)*3+kh,        kw wrap 마다 +1   (옛 pe_id_calc)
 
     //==========================================================================
-    // 4. PE ID 계산
-    //
-    //   pe_id = (oc_pair * 8 + ic) * 3 + kh
-    //
-    //   bit-width:
-    //     oc_pair*8 + ic: 6-bit
-    //     * 3: 8-bit
-    //     + kh: 8-bit (max 191 < 256)
+    // 4. slot_id (= kw, multiply 없음)
+    //   pe_id 는 §4.5 의 pe_id_seq accumulator 로 산출.
     //==========================================================================
-    wire [7:0] pe_id_calc = ((oc_pair_cnt * 4'd8) + ic_cnt) * 2'd3 + kh_cnt;
     wire [1:0] slot_id_calc = kw_cnt;
 
     //==========================================================================
@@ -210,6 +209,28 @@ module weight_loader_conv2 (
     end
 
     //==========================================================================
+    // 4.5 ★300MHz: addr/pe_id increment accumulator (nested-multiply 대체)
+    //   §5 nested 카운터와 lockstep 으로 증가 → addr_seq@T == 옛 addr_calc@T,
+    //   pe_id_seq@T == 옛 pe_id_calc@T (bit-exact, 타이밍 동일).
+    //   LOADING 진입 시 0, !is_last 동안 매 cycle +1, kw wrap(kw_cnt==2) 마다
+    //   pe_id_seq +1, is_last/DRAIN/FINISH 에서 freeze (옛 카운터 freeze 와 일치).
+    //==========================================================================
+    always @(posedge clk) begin
+        if (rst) begin
+            addr_seq  <= 10'd0;
+            pe_id_seq <= 8'd0;
+        end else if (state == IDLE) begin
+            if (loader_start) begin
+                addr_seq  <= 10'd0;
+                pe_id_seq <= 8'd0;
+            end
+        end else if (state == LOADING && !is_last_addr) begin
+            addr_seq <= addr_seq + 10'd1;
+            if (kw_cnt == 2'd2) pe_id_seq <= pe_id_seq + 8'd1;
+        end
+    end
+
+    //==========================================================================
     // 6. BMG addr 전송 (LOADING 동안 enable)
     //==========================================================================
     always @(posedge clk) begin
@@ -218,7 +239,7 @@ module weight_loader_conv2 (
             c2w_addrb <= 10'd0;
         end else begin
             c2w_enb   <= (state == LOADING);
-            c2w_addrb <= addr_calc;
+            c2w_addrb <= addr_seq;       // ★300MHz: addr_calc(multiply) → addr_seq(accumulator)
         end
     end
 
@@ -247,7 +268,7 @@ module weight_loader_conv2 (
             load_en_d2 <= 1'b0;
         end else begin
             // Stage 1: 현재 cycle 카운터 → 1 cycle 후 stage 1
-            pe_id_d1   <= pe_id_calc;
+            pe_id_d1   <= pe_id_seq;     // ★300MHz: pe_id_calc(multiply) → pe_id_seq(accumulator)
             slot_id_d1 <= slot_id_calc;
             load_en_d1 <= (state == LOADING);
 
