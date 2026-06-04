@@ -109,7 +109,7 @@ module cnn_accelerator (
     //   rst_a : aclk(100) 도메인 reset — resetn 이 이미 100 동기라 직결.
     //   rst   : clk(300) 도메인 reset — resetn 이 300 에 비동기이므로 async-assert /
     //           sync-deassert 재동기화 (reset-removal 메타스테이블 방지). 하류 datapath 는
-    //           기존처럼 동기 `if(rst)` 로 사용 (deassert 만 +2 clk 지연, idle-start 라 무해).
+    //           기존처럼 동기 `if(rst)` 로 사용.
     //==========================================================================
     wire rst_a = ~resetn;
 
@@ -118,7 +118,29 @@ module cnn_accelerator (
         if (!resetn) begin rst_meta <= 1'b1; rst_sync <= 1'b1; end
         else         begin rst_meta <= 1'b0; rst_sync <= rst_meta; end
     end
-    wire rst = rst_sync;
+
+    //==========================================================================
+    // Reset 분배 트리 (300MHz fanout 완화)
+    //   기존: rst_sync 단일 net 이 datapath 전 register(~41k load)로 직접 fanout
+    //         → BUFG + die 전역 route 로 300MHz 최대 WNS 경로(−1.94, route 85%).
+    //   변경: async-assert / sync-deassert 를 유지한 채 registered 복제 트리로 분배.
+    //         rst_sync(1) → rst_l1[~11] → rst(leaf ~323) → datapath. max_fanout 으로
+    //         합성이 각 단을 자동 복제하고, 각 leaf 가 자기 cluster 근처에 배치되어
+    //         high-fanout net 이 짧은 local net 다수로 쪼개짐 (BUFG 불필요).
+    //   ★ 기능 불변: 모든 하류 register 가 동일하게 reset 됨. deassert 만 +2 clk 더
+    //     지연(전체 idle-start 라 무해), assertion 은 각 단이 negedge resetn 으로 즉시.
+    //==========================================================================
+    (* max_fanout = 32 *)  reg rst_l1;     // L1: trunk (few copies)
+    always @(posedge clk or negedge resetn)
+        if (!resetn) rst_l1 <= 1'b1;
+        else         rst_l1 <= rst_sync;
+
+    (* max_fanout = 128 *) reg rst_leaf;   // L2: leaf (heavily replicated → datapath)
+    always @(posedge clk or negedge resetn)
+        if (!resetn) rst_leaf <= 1'b1;
+        else         rst_leaf <= rst_l1;
+
+    wire rst = rst_leaf;
 
     //==========================================================================
     // 제어 pulse CDC (CSR aclk=100MHz → datapath clk=300MHz) — ★ 300MHz overclock 핵심

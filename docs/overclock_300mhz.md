@@ -406,14 +406,13 @@ OTHER 는 단일이 아닌 **다종 −1.6~−1.7 덩어리**: FC FSM(`pair_cnt/
 ### 13.5 다음 best 레버: Winograd (MHz 졸업 후)
 190MHz 로 datapath 클럭은 한계 도달 → 추가 가속은 **알고리즘 복잡도**에서. conv2 가 throughput floor(1799 cyc/img, 3×3 conv 의 9-MAC/output). **Winograd F(2×2, 3×3)** 은 4 output 을 4×4 tile 로 묶어 16 MAC 으로 처리(naive 36 대비 **2.25× 곱셈 감소**) → conv2 cycle/img 대폭 ↓. 참고자료 `docs/pdfs/Winograd`. 적용 시 고려: (a) input/weight transform(상수 행렬, INT8→transform 후 비트폭 증가 주의), (b) DSP packing 재설계(현 SIMD INT8×2 packing 과 호환성), (c) conv1(5×5?)·fc 는 별개. → conv2 우선, 별도 설계문서로.
 
-### 13.6 ★ HW 측정 결과 — 오버클럭은 적용됐으나 latency 불변 (feed-bound 판명, 2026-06-04)
-clk_wiz `clk_out3` 가 188 요청 → **200MHz 로 스냅**(`report_clocks`: clk_out3 period 5.000ns, ×2). impl WNS +0.04 로 닫힘, HW **class match 10000/10000** ✅. **그러나 latency = 18,771,076 cyc @100MHz timer = 0.188s = baseline 그대로** (오버클럭 전후 0% 변화).
-- **timer 검증**: CSR(`csr_axi_1`)는 `clk_out1`=100MHz 도메인의 wall-clock 카운터(RTL `csr_axi_slave_lite_..._csr.v`: 100MHz 매 cycle +1). `us=cyc/100` 정확. → 측정 신뢰 가능, 오버클럭이 wall-clock 을 안 줄인 게 사실.
-- **~~feed-bound 실증(100 vs 200 동일 18.77M)~~ → ★오염 판명, §13.7 로 정정**: 그 200MHz 비교가 **silent timing fail 상태의 broken 빌드**였음(아래 §13.7). 실제로는 100MHz=accel-bound, 150MHz=CDMA-bound 로 클럭이 100→150 에서 도움됨.
-- **결론(병목 모델 정정)**: 가속기 100→200MHz(2×)인데 wall-clock 0 변화 = **compute-bound 아님 → PS feed-bound @100MHz**. firmware 루프가 `poll(can_load)+blocking CDMA(196w)+img_ready` 직렬 ≈ **1877 cyc/img @100MHz**. baseline 은 conv2(1799)≈feed(1877) **공동제약**(="가속기-bound" 판정은 아슬한 것)이라, 가속기만 올리니 feed(100MHz)가 floor 로 노출. profile "accel-wait 63%"는 can_load 대기(feed/handshake 페이싱)이지 순수 compute 아님.
-- **재우선순위**: **오버클럭·Winograd 는 현재 latency 를 못 줄임**(가속기는 이미 feed 보다 빠름). 다음 레버 = **100MHz 입력 feed 파이프라인**: blocking CDMA 를 앞서 달리게(multi-buffer / SG-queue), 입력 bank >2, can_load 핸드셰이크 round-trip 축소 → 목표 <900 cyc/img @100MHz(200MHz 가속기 매칭). Winograd(conv2 compute↓, §13.5)는 feed 를 먼저 풀어 다시 compute-bound 가 된 뒤에야 효과.
-- **확정 실험(선택)**: clk_out3=100 vs 200 에서 profile `t_canload` 비교 — 거의 같으면 feed-bound 확정. (2×→0 만으로도 사실상 결론.)
-- firmware(`vitis/main.c`) 주석·출력·bottleneck 메시지를 이 발견에 맞게 정정(clk 200MHz, feed-bound, "다음=feed 파이프라인").
+### 13.6 ★ HW 측정 결과 (2026-06-04)
+**확정: 150MHz 합성 빌드 HW 작동 — class match 10000/10000** (clean 빌드).
+- timer = CSR(`clk_out1`=100MHz) wall-clock 카운터(RTL `csr_axi_slave_lite_..._csr.v` 확인, `us=cyc/100` 정확).
+- 188 요청은 clk_wiz 가 200MHz 로 스냅(MMCM: clk_out1=100 + clk_out2=200 이 VCO 고정 → clk_out3 정수분주만; 가능값 {200, 171.4, 166.7, 150, …}).
+
+### 13.7 다음 후보 — reset fanout
+300MHz 합성 시 conv2 broadcast(§13.2)를 닫은 뒤 남는 최대 WNS = reset net(`rst_sync_reg→BUFG→fo=41323→DSP/RSTB·register`, −1.94, route 85%, 1343 violating, die 전역). 경감안(§13.4-5 fallback): CDC 생성부 불변, `pe_cell` DSP RSTA/B/M/P 등 datapath self-flush register reset 제거(41323 큰 덩어리). en-gating+FILL 정합 보장. **변경 시 iverilog X-propagation 재검증 필수.**
 
 ---
 *관련: `docs/ip_spec/block_memory_generator.md`(BMG L=2/REGCEB), `docs/conv1_timing.md`, `RTL/conv2/conv2_timing.md`, memory `overclock-300mhz-kickoff`.*

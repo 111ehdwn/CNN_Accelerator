@@ -71,7 +71,10 @@ module conv2_engine #(
     //==========================================================================
     wire [1:0]  fsm_sel;
     wire [1:0]  fsm_col_sel;
-    wire        fsm_shift_en;
+    // ★300MHz: shift_en(=state decode)이 8 ic 의 line_buffer/window CE-gen 으로 die 전역
+    //   fanout → far-ic route 가 워스트(state→shift_en→lb2 CE, route 86%). max_fanout 으로
+    //   decode 를 ic 클러스터 근처에 복제(zero-latency, 기능 불변; state 도 max_fanout=32 복제됨).
+    (* max_fanout = 16 *) wire fsm_shift_en;
     wire        fsm_pe_en;
     wire [4:0]  fsm_row_cnt;
     wire [4:0]  fsm_col_cnt;
