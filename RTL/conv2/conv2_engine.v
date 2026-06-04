@@ -24,7 +24,13 @@
 //     (c1c2/c2pool BMG 는 외부에서 인스턴스화, 본 모듈은 wire 만 노출.)
 //////////////////////////////////////////////////////////////////////////////////
 
-module conv2_engine (
+module conv2_engine #(
+    // ★200MHz Step 2: PE broadcast(sel/pe_en/pe_x) 입력단에 추가할 register 단수(N).
+    //   0 = 원래 타이밍 (Step2 off, Step1b 만 적용).
+    //   1,2,... = sel/pe_en/pe_x 를 +N register 복제(max_fanout) + conv2_fsm DRAIN +N.
+    //   compute 결과는 N 무관 bit-exact (latency 만 +N/image 증가). 자세한 내용 §7.5.
+    parameter PE_BC_DELAY = 1
+) (
     input  wire         clk,
     input  wire         rst,                  // active-high synchronous
     input  wire         start,                // PS 로부터 1-cycle pulse
@@ -65,7 +71,10 @@ module conv2_engine (
     //==========================================================================
     wire [1:0]  fsm_sel;
     wire [1:0]  fsm_col_sel;
-    wire        fsm_shift_en;
+    // ★200MHz: shift_en(=state decode)이 8 ic 의 line_buffer/window CE-gen 으로 die 전역
+    //   fanout → far-ic route 가 워스트(state→shift_en→lb2 CE, route 86%). max_fanout 으로
+    //   decode 를 ic 클러스터 근처에 복제(zero-latency, 기능 불변; state 도 max_fanout=32 복제됨).
+    (* max_fanout = 16 *) wire fsm_shift_en;
     wire        fsm_pe_en;
     wire [4:0]  fsm_row_cnt;
     wire [4:0]  fsm_col_cnt;
@@ -89,7 +98,7 @@ module conv2_engine (
     //==========================================================================
     // 1. FSM
     //==========================================================================
-    conv2_fsm fsm_inst (
+    conv2_fsm #(.PE_BC_DELAY(PE_BC_DELAY)) fsm_inst (
         .clk             (clk),
         .rst             (rst),
         .start           (start),
@@ -178,6 +187,30 @@ module conv2_engine (
     end
 
     //==========================================================================
+    // 5.5 ★200MHz Step 1b: weight broadcast +1 register stage
+    //   weight-load broadcast(packed_w fo=192 / slot_id / load_en_dec)는 192 PE
+    //   가 die 전역 DSP 컬럼에 깔려 route 가 die-spanning → WNS 워스트(-2.99).
+    //   register 1단 추가 + 복제(max_fanout)로 긴 route 를 둘로 분할.
+    //   weight-load 는 시스템 시작 1회 (loader_done → 첫 compute 까지 수백+ cycle
+    //   여유) 라 +1 cycle 무해. 3 신호를 동일하게 +1 지연 → PE latch tuple 정렬 보존.
+    //   (compute 경로(sel/x)는 §7.5 Step 2 에서 별도 지연 — load 와 시간상 분리.)
+    //==========================================================================
+    reg [191:0]                     pe_load_en_dec_r;   // 각 bit = 1 PE 전용 (저fanout)
+    (* max_fanout = 32 *) reg [24:0] wl_packed_w_r;      // fo=192 → 복제
+    (* max_fanout = 32 *) reg [1:0]  wl_slot_id_r;       // fo=192 → 복제
+    always @(posedge clk) begin
+        if (rst) begin
+            pe_load_en_dec_r <= 192'd0;
+            wl_packed_w_r    <= 25'd0;
+            wl_slot_id_r     <= 2'd0;
+        end else begin
+            pe_load_en_dec_r <= pe_load_en_dec;
+            wl_packed_w_r    <= wl_packed_w;
+            wl_slot_id_r     <= wl_slot_id;
+        end
+    end
+
+    //==========================================================================
     // 6. Line buffer + window register chain (per IC, 8 instance)
     //   c1c2_dout 의 8-bit slice [ic*8 +: 8] → lb1 → lb2 → window
     //==========================================================================
@@ -251,6 +284,78 @@ module conv2_engine (
     endgenerate
 
     //==========================================================================
+    // 7.5 ★200MHz Step 2: PE broadcast 입력단 register pipeline (depth = PE_BC_DELAY)
+    //   compute 제어/activation broadcast (sel / pe_en / pe_x) 는 192 PE 로 die 전역
+    //   분산 → route 지배 (WNS -2.72, DSP 94% die-spanning). PE 입력 직전에 register
+    //   N 단 + 복제(max_fanout) 삽입하여 broadcast route 를 PE 클러스터 근처 replica
+    //   에서 출발하도록 단축. col_sel·shift_en·FSM·window·c1c2 read 는 원래 타이밍
+    //   유지(pe_x mux 출력만 지연).
+    //
+    //   ★정렬 불변식: sel/pe_en/pe_x 를 *동일한* N cycle 지연 → PE 가 보는
+    //   {weight(sel), activation(x)} tuple 은 N cycle 전 fsm-activity 와 동일 →
+    //   곱셈 시퀀스 bit-exact (latency 만 +N). downstream(sel_pipe/pe_en_pipe →
+    //   adder_en/kcol_en/kcol_kw_phase)은 §9 에서 지연된 pe_*_bc 에서 tap → 전체
+    //   +N 균일 시프트(상대 정렬 보존). c2pool write/wdone 도 자동 +N; FSM DRAIN 은
+    //   PE_BC_DELAY 만큼 연장(conv2_fsm) 하여 마지막 write 가 write_addr reset 전에
+    //   완료되도록 보장. rdone(c1c2 read facing)은 미지연 read 라 불변.
+    //==========================================================================
+    wire [191:0] pe_x_flat;            // 24 mux 출력(3 K_row × 8 IC) × 8b packed
+    generate
+        for (kh_g = 0; kh_g < 3; kh_g = kh_g + 1) begin : gen_pex_pack
+            for (ic_g = 0; ic_g < 8; ic_g = ic_g + 1) begin : gen_pex_pack_ic
+                assign pe_x_flat[(kh_g*8 + ic_g)*8 +: 8] = pe_x[kh_g][ic_g];
+            end
+        end
+    endgenerate
+
+    wire [1:0]   pe_sel_bc;            // PE 192개가 보는 weight selector
+    wire         pe_en_bc;             // PE 192개가 보는 clock enable
+    wire [191:0] pe_x_flat_bc;         // 지연된 activation (packed)
+
+    generate
+        if (PE_BC_DELAY == 0) begin : gen_bc_passthru
+            assign pe_sel_bc    = fsm_sel;
+            assign pe_en_bc     = fsm_pe_en;
+            assign pe_x_flat_bc = pe_x_flat;
+        end else begin : gen_bc_delay
+            (* max_fanout = 32 *) reg [1:0] sel_sr   [1:PE_BC_DELAY];  // fo=192 → 복제
+            (* max_fanout = 32 *) reg       pe_en_sr [1:PE_BC_DELAY];  // fo=192 → 복제
+            reg [191:0]                     pe_x_sr  [1:PE_BC_DELAY];  // 각 8b slice fo=8
+            integer d;
+            always @(posedge clk) begin
+                if (rst) begin
+                    for (d = 1; d <= PE_BC_DELAY; d = d + 1) begin
+                        sel_sr[d]   <= 2'd0;
+                        pe_en_sr[d]  <= 1'b0;
+                        pe_x_sr[d]   <= 192'd0;
+                    end
+                end else begin
+                    sel_sr[1]  <= fsm_sel;
+                    pe_en_sr[1] <= fsm_pe_en;
+                    pe_x_sr[1]  <= pe_x_flat;
+                    for (d = 2; d <= PE_BC_DELAY; d = d + 1) begin
+                        sel_sr[d]   <= sel_sr[d-1];
+                        pe_en_sr[d]  <= pe_en_sr[d-1];
+                        pe_x_sr[d]   <= pe_x_sr[d-1];
+                    end
+                end
+            end
+            assign pe_sel_bc    = sel_sr[PE_BC_DELAY];
+            assign pe_en_bc     = pe_en_sr[PE_BC_DELAY];
+            assign pe_x_flat_bc = pe_x_sr[PE_BC_DELAY];
+        end
+    endgenerate
+
+    wire signed [7:0] pe_x_d [0:2][0:7];   // 지연된 activation (PE 입력, unpacked)
+    generate
+        for (kh_g = 0; kh_g < 3; kh_g = kh_g + 1) begin : gen_pex_unpack
+            for (ic_g = 0; ic_g < 8; ic_g = ic_g + 1) begin : gen_pex_unpack_ic
+                assign pe_x_d[kh_g][ic_g] = pe_x_flat_bc[(kh_g*8 + ic_g)*8 +: 8];
+            end
+        end
+    endgenerate
+
+    //==========================================================================
     // 8. PE array (192 = 8 OC_pair × 8 IC × 3 K_row)
     //   각 PE: DEPTH=3 (K_col weight slot 3개)
     //   pe_id = (oc_pair * 8 + ic) * 3 + kh  (weight_loader 와 매핑)
@@ -265,12 +370,12 @@ module conv2_engine (
                     pe_cell #(.DEPTH(3)) pe_inst (
                         .clk      (clk),
                         .rst      (rst),
-                        .packed_w (wl_packed_w),
-                        .load_idx (wl_slot_id),
-                        .load_en  (pe_load_en_dec[(op_g*8 + ic_g)*3 + kh_g]),
-                        .sel      (fsm_sel),
-                        .en       (fsm_pe_en),
-                        .x        (pe_x[kh_g][ic_g]),
+                        .packed_w (wl_packed_w_r),                                  // Step1b: +1 reg
+                        .load_idx (wl_slot_id_r),                                   // Step1b: +1 reg
+                        .load_en  (pe_load_en_dec_r[(op_g*8 + ic_g)*3 + kh_g]),     // Step1b: +1 reg
+                        .sel      (pe_sel_bc),                                      // Step2: +N reg
+                        .en       (pe_en_bc),                                       // Step2: +N reg
+                        .x        (pe_x_d[kh_g][ic_g]),                             // Step2: +N reg
                         .mul0     (pe_mul0[op_g][ic_g][kh_g]),
                         .mul1     (pe_mul1[op_g][ic_g][kh_g])
                     );
@@ -282,8 +387,10 @@ module conv2_engine (
     //==========================================================================
     // 9. Delay pipeline (sel, pe_en → 하위 stage 의 en/kw_phase)
     //
-    //   pe_en_pipe[k] @ cycle T = fsm_pe_en @ (T-1-k)
-    //   sel_pipe[k]   @ cycle T = fsm_sel   @ (T-1-k)
+    //   ★Step2: 지연된 PE-입력(pe_sel_bc/pe_en_bc = fsm 신호 +PE_BC_DELAY)에서 tap →
+    //   pe_en_pipe[k] @ cycle T = pe_en_bc @ (T-1-k) = fsm_pe_en @ (T-1-k-PE_BC_DELAY)
+    //   sel_pipe[k]   @ cycle T = pe_sel_bc @ (T-1-k) = fsm_sel   @ (T-1-k-PE_BC_DELAY)
+    //   → PE 입력 timeline 기준 상대 정렬은 PE_BC_DELAY 무관하게 동일(전체 +N 시프트).
     //
     //   사용:
     //     adder_en       = pe_en_pipe[3]   (4-cycle = PE latency)
@@ -302,8 +409,8 @@ module conv2_engine (
                 pe_en_pipe[i] <= 1'b0;
             end
         end else begin
-            sel_pipe[0]   <= fsm_sel;
-            pe_en_pipe[0] <= fsm_pe_en;
+            sel_pipe[0]   <= pe_sel_bc;    // Step2: 지연된 PE-입력 timeline 에서 tap
+            pe_en_pipe[0] <= pe_en_bc;     //        → downstream 전체 +N 균일 시프트
             for (i = 1; i < 9; i = i + 1) begin
                 sel_pipe[i]   <= sel_pipe[i-1];
                 pe_en_pipe[i] <= pe_en_pipe[i-1];

@@ -6,9 +6,9 @@
 //   - 입력: mul0[0~8], mul1[0~8] 각 17비트 signed
 //   - 출력: sum0 (oc_even), sum1 (oc_odd) 각 24비트 signed
 //
-//   ★ 300MHz refactor (docs/conv1_timing.md §5.2):
+//   ★ 200MHz refactor (docs/conv1_timing.md §5.2):
 //     기존 1-cycle 조합 9입력 가산 → 4-stage pipeline (1 add-level/stage).
-//     Artix-7 −1 의 9입력 4-level 조합 가산 경로가 300MHz(3.33ns) 임계 →
+//     Artix-7 −1 의 9입력 4-level 조합 가산 경로가 200MHz(5.0ns) 임계 →
 //     conv2 krow_ic_adder_tree (24:1, 5-stage) 와 동일 철학으로 파이프라인.
 //
 //   Stage 구조 (각 stage 1-cycle pipeline register, en 게이팅):

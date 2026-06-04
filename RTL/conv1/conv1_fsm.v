@@ -27,7 +27,7 @@
 //     7. FLUSH2: 파이프라인 드레인 FLUSH_LEN(=12) 사이클
 //     8. DONE  : done + wdone pulse 1사이클
 //
-//   파이프라인 딜레이 (300MHz refactor, docs/conv1_timing.md 참조):
+//   파이프라인 딜레이 (200MHz refactor, docs/conv1_timing.md 참조):
 //     OUT_DELAY (valid_sr 깊이) = L + N_adder + 4
 //       L = bram_input read latency (L=2, Primitives Output Register)
 //       N_adder = conv1_adder_tree pipeline stage (=4)
@@ -86,7 +86,7 @@ module conv1_fsm (
     localparam IMG_W      = 28;
     localparam IMG_H      = 28;
 
-    // 300MHz refactor 파이프라인 보상 (docs/conv1_timing.md §3, §6)
+    // 200MHz refactor 파이프라인 보상 (docs/conv1_timing.md §3, §6)
     //   PIPE_DELAY = OUT_DELAY = L + N_adder + 4  (valid_sr/row_sr/col_sr/sel_sr 깊이)
     //   FLUSH_LEN  = OUT_DELAY + 2                (마지막 픽셀 완전 drain)
     localparam BRAM_L       = 2;                       // bram_input L=2 (Primitives Output Register)

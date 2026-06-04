@@ -2,15 +2,17 @@
 //////////////////////////////////////////////////////////////////////////////////
 // Module Name: fc_pe_array
 // Description:
-//   FC SIMD PE array.
+//   FC SIMD PE array (16 lanes).
 //
-//   x_flat  : 16 channel activation, 16 * 8 = 128-bit
-//   w0_flat : even output column weights, 16 * 8 = 128-bit
-//   w1_flat : odd  output column weights, 16 * 8 = 128-bit
+//   x_flat        : 16 channel activation,         16 * 8  = 128-bit
+//   w_packed_flat : 16 channel SIMD-packed weight, 16 * 32 = 512-bit
+//                   각 32b 슬롯 = gen script(weight_simd_pack.py) 의 A = W1*2^17 + W0
+//                   (25-bit, [24:0]). PS/BMG 가 변환 없이 그대로 저장 → 재조립 없이
+//                   pe_cell.packed_w 로 직결 (conv1/conv2 와 동일 SIMD-direct 방식).
 //
-//   Each lane uses one SIMD-packed DSP cell that computes:
-//     p0 = x[ch] * w0[ch]
-//     p1 = x[ch] * w1[ch]
+//   Each lane: pe_cell(STREAM=1) computes
+//     p0 = x[ch] * W0[ch]   (even output column)
+//     p1 = x[ch] * W1[ch]   (odd  output column)
 //////////////////////////////////////////////////////////////////////////////////
 
 module fc_pe_array (
@@ -19,8 +21,7 @@ module fc_pe_array (
     input  wire         en,
 
     input  wire [127:0] x_flat,
-    input  wire [127:0] w0_flat,
-    input  wire [127:0] w1_flat,
+    input  wire [511:0] w_packed_flat,   // 16ch × 32b SIMD-A (A=W1*2^17+W0), gen 그대로
 
     output wire [255:0] p0_flat,
     output wire [255:0] p1_flat
@@ -29,18 +30,11 @@ module fc_pe_array (
     genvar ch;
     generate
         for (ch = 0; ch < 16; ch = ch + 1) begin : gen_ch
-            wire signed [7:0]  x_ch  = x_flat [ch*8 +: 8];
-            wire signed [7:0]  w0_ch = w0_flat[ch*8 +: 8];
-            wire signed [7:0]  w1_ch = w1_flat[ch*8 +: 8];
+            wire signed [7:0] x_ch = x_flat[ch*8 +: 8];
 
-            // SIMD A-port pack: A = W1*2^17 + W0 (25b), W0<0 carry 보정.
-            //   [7:0]   = W0
-            //   [16:8]  = {9{W0[7]}}  (sign extension)
-            //   [24:17] = W1 + (W0<0 ? -1 : 0)
-            // 공용 core/pe_cell (STREAM=1) 의 A포트가 받는 packed_w 포맷.
-            wire               w0_neg      = w0_ch[7];
-            wire signed [7:0]  w1_adj      = w1_ch + (w0_neg ? 8'shFF : 8'sh00);
-            wire        [24:0] packed_w_ch = { w1_adj, {9{w0_neg}}, w0_ch[7:0] };
+            // SIMD-packed A (25b) 를 BMG 에서 그대로 받아 pe_cell A포트로 직결.
+            //   (구: even/odd 8b 분리 후 A 재조립 → A 직접 저장으로 제거. bit-identical.)
+            wire [24:0] packed_w_ch = w_packed_flat[ch*32 +: 25];
 
             wire signed [16:0] p0_ch;   // core/pe_cell 출력 17b
             wire signed [16:0] p1_ch;
