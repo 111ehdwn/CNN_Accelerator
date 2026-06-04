@@ -3,7 +3,7 @@
 ============================
 
 시나리오 #2: **복소수 Winograd F(4×4, 3×3)** 로 Conv2 를 계산하는 golden reference.
-설계 배경: `docs/winograd_complex_f(4x4,3x3).md` (점집합 {0,±1,±i,∞}, Gaussian-integer 변환).
+설계 배경: `docs/winograd/algorithm_complex_f43.md` (점집합 {0,±1,±i,∞}, Gaussian-integer 변환).
 
 ──────────────────────────────────────────────────────────────────────────────
 ★ 문서 행렬 정정 (이 golden 으로 발견, 2026-06-04)
