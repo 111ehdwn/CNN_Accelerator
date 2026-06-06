@@ -1,0 +1,10 @@
+# [STAGE 07] 200MHz 마감 — phys_opt -directive AggressiveExplore (WNS +0.011, MET)
+# 근거: default phys_opt plateau(−0.102) → AggressiveExplore 가 −0.098→+0.011, 0 failing.
+# positive WNS @ slow(signoff) corner = 정식 MET.
+
+INFO: [Physopt 32-668] Current Timing Summary | WNS=-0.098 | TNS=-0.098 | WHS=0.002 | THS=0.000 |
+INFO: [Physopt 32-668] Current Timing Summary | WNS=-0.098 | TNS=-0.098 | WHS=0.002 | THS=0.000 |
+INFO: [Physopt 32-668] Current Timing Summary | WNS=0.011 | TNS=0.000 | WHS=0.002 | THS=0.000 |
+INFO: [Physopt 32-668] Current Timing Summary | WNS=0.011 | TNS=0.000 | WHS=0.002 | THS=0.000 |
+INFO: [Physopt 32-668] Current Timing Summary | WNS=0.011 | TNS=0.000 | WHS=0.002 | THS=0.000 |
+INFO: [Physopt 32-668] Current Timing Summary | WNS=0.011 | TNS=0.000 | WHS=0.002 | THS=0.000 |

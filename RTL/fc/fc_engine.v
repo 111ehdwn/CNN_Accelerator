@@ -26,7 +26,7 @@
 //     [255:128] : odd  output column weights, 16ch
 //
 //   BRAM read latency:
-//     poolfc (input) BRAM = 2 cycle (L=2, 300MHz)
+//     poolfc (input) BRAM = 2 cycle (L=2, 200MHz)
 //     weight BRAM         = 2 cycle (L=2, Primitive Output Register + REGCEB tie1)
 //////////////////////////////////////////////////////////////////////////////////
 
@@ -38,13 +38,15 @@ module fc_engine #(
     input  wire         start,
 
     //==========================================================================
-    // FC weight BRAM Port A  (PS write via 256-bit AXI BRAM Ctrl)
-    // 256-bit × 1024 (720 used), addr = pair*144 + spatial
+    // FC weight BRAM Port A  (PS write via 512-bit AXI BRAM Ctrl)
+    // 512-bit × 1024 (720 used), addr = pair*144 + spatial.
+    //   1 word = 16ch × 32b SIMD-packed A (A=W1*2^17+W0). gen 산출(11520×32b) 을
+    //   PS 가 변환 없이 그대로 direct write (16 A/word).
     //==========================================================================
     input  wire         fcw_ena,
-    input  wire [31:0]  fcw_wea,     // 256-bit byte-write (AXI WSTRB[31:0])
-    input  wire [9:0]   fcw_addra,   // symmetric Port A: 256b × 1024 word addr
-    input  wire [255:0] fcw_dina,
+    input  wire [63:0]  fcw_wea,     // 512-bit byte-write (AXI WSTRB[63:0])
+    input  wire [9:0]   fcw_addra,   // symmetric Port A: 512b × 1024 word addr
+    input  wire [511:0] fcw_dina,
 
     //==========================================================================
     // poolfc buffer read port
@@ -111,16 +113,18 @@ module fc_engine #(
     assign poolfc_addr = {fsm_input_bank_sel, fsm_s_cnt};
 
     //==========================================================================
-    // 3. Weight BRAM, 256-bit x 720, L=2 read latency
+    // 3. Weight BRAM, 512-bit x 720, L=2 read latency
     //    (Primitive Output Register ON + REGCEB tie1 → always-follow)
+    //    1 word = 16ch × 32b SIMD-A. fc_pe_array 가 lane 별 [ch*32 +:25] 를
+    //    pe_cell.packed_w 로 직결 (재조립 없음).
     //==========================================================================
     wire [9:0]   fcw_addrb = fsm_wbase + {2'd0, fsm_s_cnt};
-    wire [255:0] fcw_doutb;
+    wire [511:0] fcw_doutb;
 
     fc_weight_bram fcw_bmg_inst (
         .clka   (clk),
         .ena    (fcw_ena),                 // ENA=fcw_ena
-        .wea    (fcw_wea),                 // WEA=fcw_wea[31:0] byte-write (AXI WSTRB 직결)
+        .wea    (fcw_wea),                 // WEA=fcw_wea[63:0] byte-write (AXI WSTRB 직결)
         .addra  (fcw_addra),
         .dina   (fcw_dina),
 
@@ -136,13 +140,10 @@ module fc_engine #(
     //   (구: fc_weight_bram L=1 + fabric reg fcw_doutb_r 로 +1 했으나, IP output reg 로
     //    통일 - conv weight BMG 와 동일 방식. REGCEB=1 로 마지막 weight(pair4 sp143) propagation
     //    보장. abrupt-stop(comp_v drop) 에서 REGCEB 미노출이면 ENB-gated → 누락; 그래서 tie1.)
-    //   L=2 output register 는 300MHz weight read 타이밍도 닫는다 (clock-to-out ~0.45ns).
+    //   L=2 output register 는 200MHz weight read 타이밍도 닫는다 (clock-to-out ~0.45ns).
 
-    // User-defined packing:
-    //   MSB side = odd column  16 weights
-    //   LSB side = even column 16 weights
-    wire [127:0] w_even_flat = fcw_doutb[127:0];
-    wire [127:0] w_odd_flat  = fcw_doutb[255:128];
+    // fcw_doutb = 16ch × 32b SIMD-A (gen 그대로). fc_pe_array 가 lane 별
+    // [ch*32 +: 25] 를 pe_cell.packed_w 로 직결 (구: even/odd 분리+재조립 제거).
 
     //==========================================================================
     // 4. Valid/control alignment
@@ -218,14 +219,13 @@ module fc_engine #(
     wire [255:0] p_odd_flat;
 
     fc_pe_array pe_inst (
-        .clk    (clk),
-        .rst    (rst),
-        .en     (pe_en),
-        .x_flat (poolfc_dout),
-        .w0_flat(w_even_flat),
-        .w1_flat(w_odd_flat),
-        .p0_flat(p_even_flat),
-        .p1_flat(p_odd_flat)
+        .clk          (clk),
+        .rst          (rst),
+        .en           (pe_en),
+        .x_flat       (poolfc_dout),
+        .w_packed_flat(fcw_doutb),        // 512b = 16ch × 32b SIMD-A, lane 별 직결
+        .p0_flat      (p_even_flat),
+        .p1_flat      (p_odd_flat)
     );
 
     //==========================================================================

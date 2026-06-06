@@ -5,16 +5,26 @@
 //   Pipeline (검증된 통합 TB 배선 그대로):
 //     Input BRAM → Conv1 → c1c2 → Conv2 → c2pool → Maxpool → poolfc → FC → class
 //
+//   ★★ 클럭 도메인 (200MHz overclock):
+//     clk  = 200MHz : datapath (전 engine + inter-stage/weight BMG Port B). 같은 MMCM(clk_wiz).
+//     aclk = 100MHz : CSR·AXI BRAM Ctrl·CDMA 도메인. 제어 pulse CDC 의 100측 + bram_output Port B.
+//     - 제어 pulse(start/img_ready: 100→200, img_done/input_consumed: 200→100)는 본 모듈 내부
+//       cdc_pulse_sync(toggle) + cdc_bit_sync(enable level)로 도메인 횡단. CSR/firmware 무변경.
+//     - inter-stage(c1c2/c2pool/poolfc)·weight·bram_input BMG 는 clka=clkb=clk(200) common-clock 유지
+//       (regen 불필요). AXI BRAM Ctrl(100) → Port A write 버스의 100→200 횡단은 XDC
+//       set_multicycle_path(같은 MMCM 위상정렬) 로 처리. bram_output 만 independent-clock
+//       (clka=clk write / clkb=aclk read). 상세: docs/overclock_300mhz.md.
+//
 //   제어 인터페이스 (CSR_AXI ↔ PL):
-//     resetn    : 외부 보드 reset 버튼 (active-low). 내부 rst = ~resetn (active-high).
-//     enable    : 1 이면 가동 (trigger qualify). 0 이면 start/img_ready 무시.
-//     start     : 1-cycle pulse (CSR 변환). conv2 LOAD_WEIGHTS 진입 (weight 적재 1회).
-//     img_ready : 1-cycle pulse. PS 가 Input BRAM 에 새 image write 완료 알림
-//                 → conv1 prior_wdone (image-by-image trigger).
+//     resetn    : 외부 보드 reset 버튼 (active-low, 100MHz peripheral_aresetn). rst(200)/rst_a(100) 도메인 동기화.
+//     enable    : 1 이면 가동 (trigger qualify). 0 이면 start/img_ready 무시. (aclk→clk 2-FF 동기)
+//     start     : aclk(100) 1-cycle pulse → cdc_pulse_sync → clk(200) 1-cycle. conv2 LOAD_WEIGHTS 진입.
+//     img_ready : aclk(100) 1-cycle pulse → cdc_pulse_sync → clk(200) 1-cycle. PS 가 Input BRAM 에
+//                 새 image write 완료 알림 → conv1 prior_wdone (image-by-image trigger).
 //     result    : 4-bit, 현재 완료 image 의 분류 결과 (class_valid 시 latch).
-//     img_done  : 1-cycle pulse, image 처리 완료 (= fc.class_valid 1-cycle 지연).
-//     input_consumed : 1-cycle pulse, conv1 이 input BRAM read 완료 (= conv1_rdone).
-//                      PS 가 같은 bank 에 다음 image 적재 가능 시점 (overlap backpressure).
+//     img_done  : clk(200) image 완료 pulse(=fc.class_valid 지연) → cdc_pulse_sync → aclk(100) 1-cycle.
+//     input_consumed : clk(200) conv1 input read 완료(=conv1_rdone) → cdc_pulse_sync → aclk(100) 1-cycle.
+//                      PS 가 같은 bank 에 다음 image 적재 가능 시점 (overlap backpressure, CSR can_load).
 //
 //   ping-pong bank: 모든 engine 내부 toggle FF 가 관리.
 //     Input BRAM 2-bank: PS 가 write 하는 bank 와 conv1 internal input_bank_sel 이
@@ -22,9 +32,9 @@
 //
 //   ★ 필요한 BMG IP (Vivado):
 //     [본 모듈 직접 인스턴스]
-//     bram_input        (PS write Port A 32b×512 / conv1 read Port B 8b×2048, L=2)  ★ 300MHz: L=1→L=2 + conv1_fsm OUT_DELAY/adder 4-stage
+//     bram_input        (PS write Port A 32b×512 / conv1 read Port B 8b×2048, L=2)  ★ 200MHz: L=1→L=2 + conv1_fsm OUT_DELAY/adder 4-stage
 //     bram_c1_to_c2     (conv1 write / conv2 read, 64b×2048, byte-write, L=2)
-//     bram_c2_to_pool   (conv2 write / maxpool read, 128b×2048, L=2)  ★ 300MHz: L=1→L=2 + maxpool_fsm 7-phase
+//     bram_c2_to_pool   (conv2 write / maxpool read, 128b×2048, L=2)  ★ 200MHz: L=1→L=2 + maxpool_fsm 7-phase
 //     bram_pool_to_fc   (maxpool write / fc read, 128b×512, L=1)   ★ 신규 IP
 //     [engine 내부 인스턴스 — Port A 만 외부 passthrough]
 //     conv1_weight_bram (conv1_engine) / conv2_weight_bram (conv2_engine) / fc_weight_bram (fc_engine)
@@ -33,7 +43,9 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 module cnn_accelerator (
-    input  wire        clk,
+    input  wire        clk,           // ★ 200MHz datapath clock (overclock). 모든 engine + BMG Port B.
+    input  wire        aclk,          // ★ 100MHz 제어/AXI-side clock (CSR·AXI BRAM Ctrl 와 동일 MMCM 출력).
+                                       //    제어 pulse CDC 의 100MHz 측 + bram_output Port B(PS read) clkb.
     input  wire        resetn,        // 외부 보드 reset 버튼 (active-low)
 
     //==========================================================================
@@ -71,13 +83,14 @@ module cnn_accelerator (
 
     //==========================================================================
     // FC weight BRAM Port A  (PS write, fc_engine 내부 BMG)
-    //   256b × 1024 (720 used). 32-bit MicroBlaze 는 32→256 datawidth converter +
-    //   256-bit AXI BRAM Controller 경유로 write (firmware 는 5760 × 32b 그대로).
+    //   512b × 1024 (720 used) = 16ch × 32b SIMD-A/word. 32-bit MicroBlaze 는
+    //   32→512 datawidth converter + 512-bit AXI BRAM Controller 경유로 write
+    //   (firmware 는 11520 × 32b SIMD 를 변환 없이 그대로).
     //==========================================================================
     input  wire         fcw_ena,
-    input  wire [31:0]  fcw_wea,
+    input  wire [63:0]  fcw_wea,
     input  wire [9:0]   fcw_addra,
-    input  wire [255:0] fcw_dina,
+    input  wire [511:0] fcw_dina,
 
     //==========================================================================
     // Output result BRAM Port B  (PS read via AXI BRAM Ctrl — bram_output)
@@ -91,16 +104,70 @@ module cnn_accelerator (
 );
 
     //==========================================================================
-    // Reset (active-high 내부 통일)
+    // Reset (도메인별 active-high 동기화) — 200MHz overclock
+    //   resetn = peripheral_aresetn (proc_sys_reset 출력, 100MHz=aclk 에 이미 동기, active-low).
+    //   rst_a : aclk(100) 도메인 reset — resetn 이 이미 100 동기라 직결.
+    //   rst   : clk(200) 도메인 reset — resetn 이 200 에 비동기이므로 async-assert /
+    //           sync-deassert 재동기화 (reset-removal 메타스테이블 방지). 하류 datapath 는
+    //           기존처럼 동기 `if(rst)` 로 사용.
     //==========================================================================
-    wire rst = ~resetn;
+    wire rst_a = ~resetn;
+
+    (* ASYNC_REG = "TRUE" *) reg rst_meta, rst_sync;
+    always @(posedge clk or negedge resetn) begin
+        if (!resetn) begin rst_meta <= 1'b1; rst_sync <= 1'b1; end
+        else         begin rst_meta <= 1'b0; rst_sync <= rst_meta; end
+    end
 
     //==========================================================================
-    // Trigger (enable 으로 qualify)
-    //   start / img_ready 는 CSR 가 만든 1-cycle pulse.
+    // Reset 분배 트리 (200MHz fanout 완화)
+    //   기존: rst_sync 단일 net 이 datapath 전 register(~41k load)로 직접 fanout
+    //         → BUFG + die 전역 route 로 200MHz 최대 WNS 경로(−1.94, route 85%).
+    //   변경: async-assert / sync-deassert 를 유지한 채 registered 복제 트리로 분배.
+    //         rst_sync(1) → rst_l1[~11] → rst(leaf ~323) → datapath. max_fanout 으로
+    //         합성이 각 단을 자동 복제하고, 각 leaf 가 자기 cluster 근처에 배치되어
+    //         high-fanout net 이 짧은 local net 다수로 쪼개짐 (BUFG 불필요).
+    //   ★ 기능 불변: 모든 하류 register 가 동일하게 reset 됨. deassert 만 +2 clk 더
+    //     지연(전체 idle-start 라 무해), assertion 은 각 단이 negedge resetn 으로 즉시.
     //==========================================================================
-    wire conv2_start_q = start     & enable;   // weight load 1회 진입
-    wire conv1_prior   = img_ready & enable;   // image-by-image trigger
+    (* max_fanout = 32 *)  reg rst_l1;     // L1: trunk (few copies)
+    always @(posedge clk or negedge resetn)
+        if (!resetn) rst_l1 <= 1'b1;
+        else         rst_l1 <= rst_sync;
+
+    (* max_fanout = 128 *) reg rst_leaf;   // L2: leaf (heavily replicated → datapath)
+    always @(posedge clk or negedge resetn)
+        if (!resetn) rst_leaf <= 1'b1;
+        else         rst_leaf <= rst_l1;
+
+    wire rst = rst_leaf;
+
+    //==========================================================================
+    // 제어 pulse CDC (CSR aclk=100MHz → datapath clk=200MHz) — ★ 200MHz overclock 핵심
+    //   start / img_ready : CSR 의 1-cycle@100 pulse 가 200MHz 에서 2 cycle 로 보여
+    //                       "3배 카운트"(conv1 prior_diff -=3 등) 위험 → toggle 동기화기로
+    //                       정확히 1-cycle@200 pulse 복원.
+    //   enable            : level → 2-FF 동기화.
+    //   (img_done / input_consumed 의 200→100 CDC 는 출력부에서 처리.)
+    //==========================================================================
+    wire enable_q;       // clk(200) 동기 enable level
+    wire start_q;        // clk(200) 1-cycle start pulse
+    wire img_ready_q;    // clk(200) 1-cycle img_ready pulse
+
+    cdc_bit_sync u_enable_sync (
+        .dst_clk(clk), .dst_rst(rst), .d_in(enable), .d_out(enable_q)
+    );
+    cdc_pulse_sync u_start_sync (
+        .src_clk(aclk), .src_rst(rst_a), .pulse_in(start),
+        .dst_clk(clk),  .dst_rst(rst),   .pulse_out(start_q)
+    );
+    cdc_pulse_sync u_imgready_sync (
+        .src_clk(aclk), .src_rst(rst_a), .pulse_in(img_ready),
+        .dst_clk(clk),  .dst_rst(rst),   .pulse_out(img_ready_q)
+    );
+
+    wire conv2_start_q = start_q     & enable_q;   // weight load 1회 진입
+    wire conv1_prior   = img_ready_q & enable_q;   // image-by-image trigger
 
     //==========================================================================
     // Handshake chain (direct wire — 통합 TB 검증 배선)
@@ -304,11 +371,23 @@ module cnn_accelerator (
     end
 
     // result 출력 포트 제거 — result_r 은 아래 result-writer 가 bram_output 에 쓰는 데만 사용.
-    assign img_done = img_done_r;
+    // img_done_r (1-cycle@200) 은 (1) 아래 result-writer 와 (2) CSR 로 가는 CDC 의 source.
 
-    // input-consumed: conv1 이 input BRAM read 를 끝낸 시점(RUN2 끝) 의 1-cycle pulse.
-    //   PS 가 같은 bank 에 다음 image(i+2) 를 안전하게 write 할 수 있는 backpressure 신호.
-    assign input_consumed = conv1_rdone;
+    //==========================================================================
+    // 제어 pulse CDC (datapath clk=200MHz → CSR aclk=100MHz) — ★ 200MHz overclock
+    //   img_done / input_consumed : 1-cycle@200 pulse(5.0ns)는 100MHz 가 놓칠 수 있음
+    //     → toggle 동기화기로 1-cycle@100 pulse 복원. CSR(img_cnt / inflight) 는 무변경.
+    //   input-consumed: conv1 이 input BRAM read 완료(RUN2 끝) 1-cycle pulse(= conv1_rdone).
+    //     PS 가 같은 bank 에 다음 image(i+2) 적재 가능 backpressure (CSR can_load).
+    //==========================================================================
+    cdc_pulse_sync u_imgdone_sync (
+        .src_clk(clk),  .src_rst(rst),   .pulse_in(img_done_r),
+        .dst_clk(aclk), .dst_rst(rst_a), .pulse_out(img_done)
+    );
+    cdc_pulse_sync u_inputcons_sync (
+        .src_clk(clk),  .src_rst(rst),   .pulse_in(conv1_rdone),
+        .dst_clk(aclk), .dst_rst(rst_a), .pulse_out(input_consumed)
+    );
 
     //==========================================================================
     // Output result store (bram_output) — per-image 결과 누적  [작업순서 1]
@@ -335,8 +414,8 @@ module cnn_accelerator (
         .wea   (res_we),                 // 1-bit (Byte Write Disable)
         .addra (res_wr_ptr),             // 14-bit image index
         .dina  (res_din),                // 8-bit {pad, result}
-        // Port B — PS read (32-bit) via AXI BRAM Ctrl
-        .clkb  (clk),
+        // Port B — PS read (32-bit) via AXI BRAM Ctrl @100MHz (aclk) — independent-clock IP
+        .clkb  (aclk),
         .enb   (res_rd_en),
         .addrb (res_rd_addr),            // 12-bit word addr
         .doutb (res_rd_data)             // 32-bit = 4 results

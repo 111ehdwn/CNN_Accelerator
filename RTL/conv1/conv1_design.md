@@ -10,7 +10,7 @@ Conv1은 LeNet 계열 CNN의 첫 번째 합성곱 레이어를 FPGA에서 가속
 | 출력 | 26×26, 8채널, signed 8-bit |
 | 커널 | 3×3, 패딩 없음 |
 | 활성화 | ReLU |
-| 파이프라인 보상 (OUT_DELAY) | 10사이클 (300MHz: L=2 + adder 4-stage) |
+| 파이프라인 보상 (OUT_DELAY) | 10사이클 (200MHz: L=2 + adder 4-stage) |
 
 > 패딩이 없으므로 출력 크기 = 28 - 3 + 1 = **26×26**
 
@@ -63,12 +63,12 @@ Round 2 (sel=1): oc4, oc5, oc6, oc7 계산  →  ch4~ch7 출력 BRAM에 기록
 
 ## 4. 파이프라인 단계별 레이턴시
 
-> ★ **300MHz refactor 반영** (cycle-by-cycle 정밀 분석은 `docs/conv1_timing.md`).
+> ★ **200MHz refactor 반영** (cycle-by-cycle 정밀 분석은 `docs/conv1_timing.md`).
 
 ```
 입력 픽셀 (BRAM)
       │
-      ▼  [2사이클] BRAM 읽기 레이턴시 (L=2, Primitives Output Register ★300MHz)
+      ▼  [2사이클] BRAM 읽기 레이턴시 (L=2, Primitives Output Register ★200MHz)
   line_buffer / window_register  ← 3×3 윈도우 완성 (+1 window latch)
       │
       ▼  [4사이클] DSP48E1 (AREG→MREG→PREG) + PE 출력 레지스터
@@ -261,10 +261,10 @@ sum (24-bit signed)
 |          항목         |      값      |
 |-----------------------|--------------|
 |   1회 스캔 사이클 수   | 784 (28×28)  |
-|    FLUSH 사이클 수     |      12 (300MHz)      |
+|    FLUSH 사이클 수     |      12 (200MHz)      |
 |    LBRST 사이클 수     |      1      |
 | 가중치 적재 사이클 수   | ~40 (BRAM 2사이클 레이턴시 포함) |
-| 전체 실행 사이클 (대략) | 40 + 784 + 12 + 1 + 784 + 12 + 1 ≈ **1634사이클** (300MHz: FLUSH 12) |
+| 전체 실행 사이클 (대략) | 40 + 784 + 12 + 1 + 784 + 12 + 1 ≈ **1634사이클** (200MHz: FLUSH 12) |
 |    유효 출력 픽셀 수    | 26×26 = 676개 × 8채널 |
 
 ---

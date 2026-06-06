@@ -1,11 +1,15 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
 // Description:
+<<<<<<< HEAD
 //   FC argmax - pipelined tournament tree (300MHz timing 대응).
+=======
+//   FC argmax — pipelined tournament tree (200MHz timing 대응).
+>>>>>>> dohyun
 //
 //   [설계 의도]
 //     기존 1-cycle combinational 10-way 비교는 24-bit 비교기 9단이 직렬로 풀려
-//     100MHz 에서도 setup 위반(-8.6ns)이었다. 300MHz(3.33ns)를 노리려면 각
+//     100MHz 에서도 setup 위반(-8.6ns)이었다. 200MHz(5.0ns)를 노리려면 각
 //     register-to-register 경로에 "24-bit 비교기 1개" 만 남겨야 한다.
 //
 //     → 10→5→3→2→1 의 4-round 토너먼트로 분해, round 마다 register.

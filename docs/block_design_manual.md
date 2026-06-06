@@ -118,8 +118,9 @@
 
 ## 3-2. CSR ↔ accelerator 제어 결선
 - CSR → accelerator: `enable`, `start`, `img_ready`
-- accelerator → CSR: `result[3:0]`, `img_done`, `input_consumed`
-- (출력 BRAM write 신호도 여기서 나옴 — STAGE 4에서 BRAM에 연결)
+- accelerator → CSR: `img_done`, `input_consumed`
+  (★ `result` 제거됨(phase 2) — 결과는 accelerator 내부 `bram_output` 에 누적, PS 가 STAGE 4
+  output AXI BRAM Ctrl(`res_rd_*`)로 read. CSR 는 result 미관여. STATUS = `[0]done [1]can_load [15:2]img_cnt`.)
 
 ## 3-3. CSR를 perif_interconnect에 연결
 - perif_interconnect 마스터 포트 추가 → CSR `S_AXI` **수동 연결**
@@ -145,23 +146,31 @@
 > 여기서 ★검증 C (최종: 정확도 + latency).
 
 ## 4-1. AXI BRAM Controller 5개 추가
-| 컨트롤러 | 용도 | 방향 |
-|---|---|---|
-| c1w_bram_axi | conv1 weight | PS write |
-| c2w_bram_axi | conv2 weight | PS write |
-| fcw_bram_axi | fc weight | PS write |
-| input_bram_axi | 입력 이미지 | PS write (ping-pong 2-bank) |
-| **output_bram_axi** | **결과 저장** | **PS read** (accelerator write) |
+> ★ 5개 BMG 는 전부 **accelerator 내부 인스턴스**. 컨트롤러는 노출된 Port 에만 붙음.
 
-- weight/input: BRAM_PORTA ↔ accelerator Port A (PS write), Port B는 내부 read
-- ★ **output BRAM**: accelerator(또는 CSR)가 `addr=img_cnt`에 result write,
-  PS는 끝나고 일괄 read. result_latch 단일 레지스터의 덮어쓰기 문제를 해결
-  (풀스피드로 돌려도 결과 안 놓침 → 측정+정확도 동시 가능).
+| 컨트롤러 | 용도 | 방향 | accelerator 노출 포트 |
+|---|---|---|---|
+| c1w_bram_axi | conv1 weight | PS write | `c1w_*` (Port A) |
+| c2w_bram_axi | conv2 weight | PS write | `c2w_*` (Port A) |
+| fcw_bram_axi | fc weight | PS write | `fcw_*` (Port A, **512-bit**) |
+| input_bram_axi | 입력 이미지 | PS write (ping-pong 2-bank) | `in_*` (Port A) |
+| **result_bram_axi** | **결과 저장 (bram_output)** | **PS read** | `res_rd_*` (Port B) |
+
+- weight/input: 컨트롤러 BRAM_PORTA ↔ accelerator `*w_*`/`in_*` (Port A write). Port B 는 내부 read.
+- ★ **result(output)**: `bram_output` 도 accelerator 내부. **write 는 내부 result-writer** 가
+  `img_done` 마다 `addr=img_cnt` 에 result 1 byte 씀(BD 결선 없음). accelerator 는 **Port B(read)
+  만 `res_rd_*` 로 노출** → `result_bram_axi` 가 read, PS 는 끝나고 일괄 read.
+  → 단일 CSR result_latch 덮어쓰기 문제 해결 (풀스피드 overlap 으로 돌려도 결과 안 놓침).
 
 ## 4-2. 결선
 - 5개 컨트롤러를 **perif_interconnect** 마스터 포트에 **수동 연결**
-- output BRAM의 write 포트(Port A 또는 B)를 accelerator/CSR의
-  result/img_cnt/img_done에 연결 (어느 포트가 write인지 BMG 설정 확인)
+- ★ **fcw_bram_axi**: AXI4(Full) + **Data Width 512** → 32-bit MicroBlaze 사이에 **32→512 데이터폭
+  변환** 필요 (AXI Interconnect 자동 up-size, 또는 AXI Data Width Converter). 나머지 4개는 32-bit.
+  fcw 1 word = 16ch × 32b SIMD-A (gen 그대로, 변환 없음).
+- BRAM 주소: 컨트롤러 `bram_addr`(byte) → BMG word addr 로 **xlslice** (§4-3).
+- **result_bram_axi → accelerator `res_rd_*`** (Port B read): `bram_en→res_rd_en`,
+  `bram_addr[13:2]→res_rd_addr[11:0]`(slice), `bram_rddata←res_rd_data[31:0]`, `bram_clk→clk`.
+  write 포트(we/wrdata) 미사용 (result write 는 내부 → BD 결선 없음).
 - Run Connection Automation → 클럭/리셋만
 
 ## 4-3. 주소 (전체 — 최종 맵)
@@ -171,14 +180,17 @@
 | CSR | `0x44A0_0000` | 64K |
 | c1w | `0xC000_0000` | 4K |
 | c2w | `0xC200_0000` | 4K |
-| fcw | `0xC400_0000` | 64K (11520 word 수용) |
+| fcw | `0xC400_0000` | **64K** (512b×1024 BMG, 720 used = 16ch×32b SIMD-A) |
 | input | `0xC600_0000` | 8K (2-bank: word 0 / word 256) |
-| **output** | (Assign All이 정함, 예 `0xC800_0000`) | 결과 수용 크기 |
+| **result** | `0xC800_0000` | **32K** (32b×4096 BMG, 2500 used) |
 | DDR | `0x8000_0000` | 256M |
 | LMB | `0x0` | 16K |
 
 - ★ 모든 BRAM/CSR는 캐시 범위(0x8...) 밖 = uncached. 직접 접근 OK.
-- ★ fcw Slice **14-bit** + BMG depth ≥ 11520 (13-bit면 weight aliasing).
+- ★ **xlslice (컨트롤러 byte addr → BMG word addr)**:
+  - **fcw** (512b = 64B/word): `bram_addr[15:6]`→`fcw_addra[9:0]` — Din=16(64K) / From=15 / DownTo=6 / Dout=10.
+  - **result** (32b = 4B/word): `bram_addr[13:2]`→`res_rd_addr[11:0]` — Din=15(32K) / From=13 / DownTo=2 / Dout=12.
+  - (Din = 실제 `bram_addr` 폭 = log2(Range). 16K로 잡으면 Din=14, From/DownTo/Dout 동일.)
 - F6 Validate → critical warning 0개
 
 ## 4-4. ★★★ 검증 C 실행 (최종) ★★★
@@ -264,7 +276,7 @@ UART OK (readable at 115200)
 2. MicroBlaze 클럭(1-3) — CLK100MHZ 직결 금지, clk_out1
 3. **캐시 미설정(1-3, 검증 A) — CPU 100배 느림 (최대 함정)**
 4. CSR write hang(3-1) — 데모 FSM 버그, robust handshake로 수정
-5. fcw aliasing(4-3) — 13-bit면 weight 깨짐, 14-bit 필요
+5. fcw 512-bit(4-2/3) — AXI4-full + 32→512 upsizer + byte-write(64b), slice `[15:6]`(Din=16). SIMD-A 16ch/word **direct (변환 없음)**. 결선 시 WEA 누락=결과 X. (구 256b {odd16,even16}+PS변환 폐기)
 6. argmax timing — 1-cycle 비교 트리 직렬화로 해결
 7. UART baud(1-4) — 115200 고정, 터미널 일치
 8. platform 재생성 금지(3-5) — Update Hardware Specification

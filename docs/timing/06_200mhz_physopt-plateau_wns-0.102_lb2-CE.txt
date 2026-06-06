@@ -1,0 +1,30 @@
+# [STAGE 06] 200MHz post-physopt(default) plateau (WNS −0.102) — shift_en 결정 근거
+# 근거: 31 failing 전부 conv2 line-buffer-2 mem CE. 워스트 = conv2 FSM state →
+#       shift_en decode → far-ic lb2 CE (route 86%). shift_en 만 max_fanout 없었음.
+# 결정: (*max_fanout=16*) wire fsm_shift_en → failing 31→1.
+# (default phys_opt 는 이 group 에서 "WNS did not improve" plateau.)
+
+INFO: [Physopt 32-669] Post Physical Optimization Timing Summary | WNS=-0.102 | TNS=-1.395 | WHS=0.026 | THS=0.000 |
+Setup :           31  Failing Endpoints,  Worst Slack       -0.102ns,  Total Violation       -1.395ns
+
+--- worst violated path ---
+Slack (VIOLATED) :        -0.102ns  (required time - arrival time)
+  Source:                 cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/fsm_inst/state_reg[0]_rep__11/C
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@2.500ns period=5.000ns})
+  Destination:            cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_per_ic[5].lb2_inst/mem_reg[14][4]/CE
+                            (rising edge-triggered cell FDRE clocked by clk_out3_cnn_accelerator_system_clk_wiz_0_0  {rise@0.000ns fall@2.500ns period=5.000ns})
+  Path Group:             clk_out3_cnn_accelerator_system_clk_wiz_0_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            5.000ns  (clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@5.000ns - clk_out3_cnn_accelerator_system_clk_wiz_0_0 rise@0.000ns)
+  Data Path Delay:        4.939ns  (logic 0.704ns (14.254%)  route 4.235ns (85.746%))
+  Logic Levels:           2  (LUT3=1 LUT6=1)
+
+--- 44개 위반 endpoint 전부 동일 cluster(lb2 mem CE) 샘플 (report_timing -max_paths 44) ---
+  Destination:            cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_per_ic[5].lb2_inst/mem_reg[14][4]/CE
+    SLICE_X14Y177        FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_per_ic[5].lb2_inst/mem_reg[14][4]/CE
+  Destination:            cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_per_ic[6].lb2_inst/mem_reg[19][0]/CE
+    SLICE_X8Y169         FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_per_ic[6].lb2_inst/mem_reg[19][0]/CE
+  Destination:            cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_per_ic[5].lb2_inst/mem_reg[11][4]/CE
+    SLICE_X10Y176        FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_per_ic[5].lb2_inst/mem_reg[11][4]/CE
+  Destination:            cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_per_ic[6].lb2_inst/mem_reg[19][4]/CE
+    SLICE_X6Y167         FDRE                                         r  cnn_accelerator_system_i/cnn_accelerator_0/inst/conv2/gen_per_ic[6].lb2_inst/mem_reg[19][4]/CE

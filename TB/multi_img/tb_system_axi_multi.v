@@ -72,7 +72,7 @@ module tb_system_axi_multi;
     reg         in_ena=0;   reg [3:0] in_wea=0;   reg [8:0]  in_addra=0;   reg [31:0]  in_dina=0;
     reg         c1w_ena=0;   reg [5:0]  c1w_addra=0;   reg [31:0]  c1w_dina=0;
     reg         c2w_ena=0;            reg [9:0]  c2w_addra=0;  reg [31:0]  c2w_dina=0;
-    reg         fcw_ena=0;            reg [9:0]  fcw_addra=0;  reg [255:0] fcw_dina=0;
+    reg         fcw_ena=0;            reg [9:0]  fcw_addra=0;  reg [511:0] fcw_dina=0;
 
     //==========================================================================
     // DUTs : CSR + cnn_accelerator
@@ -90,7 +90,7 @@ module tb_system_axi_multi;
     );
 
     cnn_accelerator cnn (
-        .clk(ACLK), .resetn(ARESETN),
+        .clk(ACLK), .aclk(ACLK), .resetn(ARESETN),   // 단일클럭 TB: aclk=clk (CDC 동기화기 지연만, 기능 동일)
         .enable(enable), .start(start), .img_ready(img_ready),
         .img_done(img_done), .input_consumed(input_consumed),
         .in_ena(in_ena), .in_wea(in_wea), .in_addra(in_addra), .in_dina(in_dina),
@@ -98,7 +98,7 @@ module tb_system_axi_multi;
         // wea = {4{ena}} 로 emul (미연결 시 wea=X → weight 가 X 로 적재되어 result=X 버그).
         .c1w_ena(c1w_ena), .c1w_wea({4{c1w_ena}}), .c1w_addra(c1w_addra), .c1w_dina(c1w_dina),
         .c2w_ena(c2w_ena), .c2w_wea({4{c2w_ena}}), .c2w_addra(c2w_addra), .c2w_dina(c2w_dina),
-        .fcw_ena(fcw_ena), .fcw_wea({32{fcw_ena}}), .fcw_addra(fcw_addra), .fcw_dina(fcw_dina),
+        .fcw_ena(fcw_ena), .fcw_wea({64{fcw_ena}}), .fcw_addra(fcw_addra), .fcw_dina(fcw_dina),
         .res_rd_en(res_rd_en), .res_rd_addr(res_rd_addr), .res_rd_data(res_rd_data)
     );
 
@@ -166,24 +166,18 @@ module tb_system_axi_multi;
     end endtask
 
     task load_fcw;
-        integer pair, s, c, k, line_idx;
-        reg signed [7:0] w0, w1; reg signed [16:0] w0p; reg signed [7:0] w1p;
-        reg [127:0] we, wo;
-        reg [255:0] word;
+        integer pair, s, c, line_idx;
+        reg [511:0] word;
     begin
+        // SIMD-direct: 16ch × 32b A (gen 그대로) 를 512b word 로 묶어 write (변환 없음).
         for (pair=0; pair<5; pair=pair+1)
           for (s=0; s<144; s=s+1) begin
-            we=0; wo=0;
+            word = 512'd0;
             for (c=0; c<16; c=c+1) begin
                 line_idx = pair*144*16 + s*16 + c;
-                w0p = $signed(fc_weight_simd[line_idx][16:0]);
-                w1p = $signed(fc_weight_simd[line_idx][24:17]);
-                w0 = w0p[7:0];
-                w1 = w1p + (w0p[16] ? 8'sd1 : 8'sd0);
-                we[c*8 +: 8] = w0; wo[c*8 +: 8] = w1;
+                word[c*32 +: 32] = fc_weight_simd[line_idx];
             end
-            word = {wo, we};
-            @(negedge ACLK); fcw_ena=1; fcw_addra=pair*144+s; fcw_dina=word;   // 256b full-word
+            @(negedge ACLK); fcw_ena=1; fcw_addra=pair*144+s; fcw_dina=word;   // 512b full-word
           end
         @(negedge ACLK); fcw_ena=0;
     end endtask

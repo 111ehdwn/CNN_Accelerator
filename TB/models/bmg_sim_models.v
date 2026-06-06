@@ -216,34 +216,35 @@ endmodule
 
 
 // ===========================================================================
-// fc_weight_bram : SDP 256b × 1024, L=2 (Primitive Output Register + REGCEB tie1)
-//   Symmetric: Port A 256b write (byte-write, ×1024) / Port B 256b read (720 used)
+// fc_weight_bram : SDP 512b × 1024, L=2 (Primitive Output Register + REGCEB tie1)
+//   Symmetric: Port A 512b write (byte-write, ×1024) / Port B 512b read (720 used).
+//   1 word = 16ch × 32b SIMD-A (A=W1*2^17+W0) — gen 산출 그대로 (재조립 없음).
 //   (tb_fc_engine.v 의 behavioral 정의와 동일 거동)
 // ===========================================================================
 module fc_weight_bram (
     input  wire         clka,
     input  wire         ena,
-    input  wire [31:0]  wea,                // 256-bit byte-write (AXI WSTRB 직결)
+    input  wire [63:0]  wea,                // 512-bit byte-write (AXI WSTRB 직결)
     input  wire [9:0]   addra,
-    input  wire [255:0] dina,
+    input  wire [511:0] dina,
 
     input  wire         clkb,
     input  wire         enb,
     input  wire [9:0]   addrb,
-    output reg  [255:0] doutb,
+    output reg  [511:0] doutb,
     input  wire         regceb              // 출력 reg CE — engine 이 1'b1 결선 (always-follow)
 );
-    reg [255:0] mem [0:1023];
-    reg [255:0] doutb_i;
+    reg [511:0] mem [0:1023];
+    reg [511:0] doutb_i;
     integer b, mi_init;
 
     initial begin
-        for (mi_init = 0; mi_init < 1024; mi_init = mi_init + 1) mem[mi_init] = 256'd0;
-        doutb_i = 256'd0; doutb = 256'd0;
+        for (mi_init = 0; mi_init < 1024; mi_init = mi_init + 1) mem[mi_init] = 512'd0;
+        doutb_i = 512'd0; doutb = 512'd0;
     end
 
     always @(posedge clka) if (ena)
-        for (b = 0; b < 32; b = b + 1)
+        for (b = 0; b < 64; b = b + 1)
             if (wea[b]) mem[addra][b*8 +: 8] <= dina[b*8 +: 8];
 
     // L=2: core read register (ENB) + output register (REGCEB gated, engine ties 1)
